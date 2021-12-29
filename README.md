@@ -14,7 +14,7 @@ This is not a finished tool and is very much so a work in progress.
 
 - T8012 T2 devices. 
 
-## Instillation 
+## Installation 
 Run the script with python3 and it should prompt to install dependencies if they aren't already installed. Python root certificate should already be installed and enabled on the machine that is running the script and gatekeeper should be disabled. 
 
 ## Dependencies 
