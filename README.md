@@ -1,15 +1,26 @@
 # ODTS
-## What is OSDT?
+## What is ODTS?
 
-Script for mounting volumes on Checkm8 vulnerable iOS devices via Ramdisk based on PyBoot by Matty [(moski)](https://twitter.com/moski_dev)
+Script for mounting volumes on Checkm8 vulnerable iOS devices via Ramdisk 
+
+More info - A tool that mounts the internal storage of a T2 machine as a volume. Particularly useful when that machine is inoperable or not functioning due to bad graphics or processor (provided the boards faults aren't shorting out lines that power the FLASH or the T2 co-processor). This is similar to the approach that Apple ASP repair centers take prior to repair attempts on a malfunctining logic board. This tool allows a standard user the ability to functionally perform a data transfer setup diagnostic on a T8012 capable device. 
 
 ## DISCLAIMER
 
 MACOS ONLY - Don't ask for Windows support
+This is not a finished tool and is very much so a work in progress. 
 
 ## Current device support
 
 - T8012 T2 devices. 
+
+## Instillation 
+Run the script with python3 and it should prompt to install dependencies if they aren't already installed. Python root certificate should already be installed and enabled on the machine that is running the script and gatekeeper should be disabled. 
+
+## Dependencies 
+-Python3 and Python2 (installed with a normal python3 instillation)
+-Several other submodules installed automatically and available in the requirements.txt for viewing
+  -- versioning of these submodules may not have to be exact, if you have conflicts you may attempt to upgrade the submodules
 
 ## Usage
 ```
