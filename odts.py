@@ -96,6 +96,9 @@ def removeFiles():
         'resources/StagedFiles/touch.img4',
         'resources/StagedFiles/callan.im4p',
         'resources/StagedFiles/callan.img4',
+        'resources/StagedFiles/ramdisk.img4',
+        'resources/shsh.shsh',
+        'resources/IM4M'
     ]
 
     for item in removeFiles: # removes files from above list
@@ -388,7 +391,8 @@ def main():
     elif args.ipsw:
         if args.amfi:
             amfiPatches = True
-            input("Warning: To applying AMFI patches, you need to compile and install https://github.com/Ralph0045/liboffsetfinder64 otherwise it will not work.\nPress enter when you have done this or if you already have it installed.")
+            print("Warning: To applying AMFI patches, you need to compile and install https://github.com/Ralph0045/liboffsetfinder64 otherwise it will not work.\nPress enter when you have done this or if you already have it installed.")
+            #input("Warning: To applying AMFI patches, you need to compile and install https://github.com/Ralph0045/liboffsetfinder64 otherwise it will not work.\nPress enter when you have done this or if you already have it installed.")
         else:
             amfiPatches = False
         if args.bootlogo:
@@ -459,7 +463,8 @@ def main():
         print("Current version is: " + tool_version)
         if args.amfi:
             amfiPatches = True
-            input("Warning: To applying AMFI patches, you need to compile and install https://github.com/Ralph0045/liboffsetfinder64 otherwise it will not work.\nPress enter when you have done this or if you already have it installed.")
+            print("Warning: To applying AMFI patches, you need to compile and install https://github.com/Ralph0045/liboffsetfinder64 otherwise it will not work.\nPress enter when you have done this or if you already have it installed.")            
+            #input("Warning: To applying AMFI patches, you need to compile and install https://github.com/Ralph0045/liboffsetfinder64 otherwise it will not work.\nPress enter when you have done this or if you already have it installed.")
 
         else:
             amfiPatches = False

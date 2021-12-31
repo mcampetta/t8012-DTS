@@ -18,8 +18,8 @@ def patchThing():
     # Code used with permission from @mcg29_
     # Original code from: https://github.com/dualbootfun/dualbootfun.github.io/blob/master/source/compareFiles.py
 
-	patched = open("resources/kernel.patched", "rb").read()
-	original = open("resources/kernel.raw", "rb").read()
+	patched = open("resources/StagedFiles/kernel.patched", "rb").read()
+	original = open("resources/StagedFiles/kernel.raw", "rb").read()
 	lenP = len(patched)
 	lenO = len(original)
 	if lenP != lenO:
@@ -31,7 +31,7 @@ def patchThing():
 		patchedByte = patched[i]
 		if originalByte != patchedByte:
 			diff.append([hex(i),hex(originalByte), hex(patchedByte)])	
-	diffFile = open('resources/kc.bpatch', 'w+')
+	diffFile = open('resources/StagedFiles/kc.bpatch', 'w+')
 	diffFile.write('#AMFI\n\n')
 	for d in diff:
 		data = str(d[0]) + " " + (str(d[1])) + " " + (str(d[2]))
@@ -149,6 +149,7 @@ def sendImages(iosVersion, useCustomLogo, A10A11Check):
     #so = subprocess.Popen(cmd, shell=True)
     #time.sleep(2)
 
+    print("iBSS sent! Device should be booting into recovery")
     cmd = "bin/irecovery -f StagedFiles/ibss.pwn"
     so = subprocess.Popen(cmd, shell=True)
     time.sleep(5)
@@ -157,15 +158,14 @@ def sendImages(iosVersion, useCustomLogo, A10A11Check):
     #cmd = "bin/irecovery2 -s"
     #so = subprocess.Popen(cmd, shell=True)
 
-    print("Stopping here as this is all we have implemented!")
-    input()
-
-    cmd = "bin/irecovery -f ibec.img4"
+    print("iBEC sent! Device should initializing iBEC")
+    cmd = "bin/irecovery -f StagedFiles/ibec.img4"
     so = subprocess.Popen(cmd, shell=True)
     time.sleep(5)
 
     if A10A11Check:
-        cmd = "bin/irecovery -f ibec.img4"
+        print("A10/A11 Check resolves to true")
+        cmd = "bin/irecovery -f StagedFiles/ibec.img4"
         so = subprocess.Popen(cmd, shell=True)
         time.sleep(3)
 
@@ -173,11 +173,12 @@ def sendImages(iosVersion, useCustomLogo, A10A11Check):
         so = subprocess.Popen(cmd, shell=True)
         time.sleep(6)
 
+    print("Bootx command send. This is needed to prevent Devicetree related issues later on")
     cmd = 'bin/irecovery -c "bootx"'  # Is needed to prevent Devicetree related issues later on
     so = subprocess.Popen(cmd, shell=True)
     time.sleep(5)
 
-    cmd = f"bin/irecovery -f bootlogo.img4"
+    cmd = f"bin/irecovery -f StagedFiles/bootlogo.img4"
     so = subprocess.Popen(cmd, shell=True)
     time.sleep(2)
 
@@ -189,7 +190,10 @@ def sendImages(iosVersion, useCustomLogo, A10A11Check):
     so = subprocess.Popen(cmd, shell=True)
     time.sleep(2)
 
-    cmd = "bin/irecovery -f devicetree.img4"
+    print("Stopping here as this is all we have implemented!")
+    input()
+
+    cmd = "bin/irecovery -f StagedFiles/devicetree.img4"
     so = subprocess.Popen(cmd, shell=True)
     time.sleep(2)
 
@@ -198,7 +202,7 @@ def sendImages(iosVersion, useCustomLogo, A10A11Check):
     time.sleep(2)
 
     if A10A11Check:
-        cmd = "bin/irecovery -f aopfw.img4"
+        cmd = "bin/irecovery -f StagedFiles/aopfw.img4"
         so = subprocess.Popen(cmd, shell=True)
         time.sleep(2)
 
@@ -206,7 +210,7 @@ def sendImages(iosVersion, useCustomLogo, A10A11Check):
         so = subprocess.Popen(cmd, shell=True)
         time.sleep(2)
 
-        cmd = "bin/irecovery -f isp.img4"
+        cmd = "bin/irecovery -f StagedFiles/isp.img4"
         so = subprocess.Popen(cmd, shell=True)
         time.sleep(2)
 
@@ -214,7 +218,7 @@ def sendImages(iosVersion, useCustomLogo, A10A11Check):
         so = subprocess.Popen(cmd, shell=True)
         time.sleep(2)
 
-        cmd = "bin/irecovery -f callan.img4"
+        cmd = "bin/irecovery -f StagedFiles/callan.img4"
         so = subprocess.Popen(cmd, shell=True)
         time.sleep(2)
 
@@ -222,7 +226,7 @@ def sendImages(iosVersion, useCustomLogo, A10A11Check):
         so = subprocess.Popen(cmd, shell=True)
         time.sleep(2)
 
-        cmd = "bin/irecovery -f touch.img4"
+        cmd = "bin/irecovery -f StagedFiles/touch.img4"
         so = subprocess.Popen(cmd, shell=True)
         time.sleep(2)
 
@@ -233,7 +237,7 @@ def sendImages(iosVersion, useCustomLogo, A10A11Check):
 
     if not '11.' in iosVersion:  # 11.x and lower don't need trustcache sent to boot =)
 
-        cmd = "bin/irecovery -f trustcache.img4"
+        cmd = "bin/irecovery -f StagedFiles/trustcache.img4"
         so = subprocess.Popen(cmd, shell=True)
         time.sleep(2)
 
@@ -241,7 +245,7 @@ def sendImages(iosVersion, useCustomLogo, A10A11Check):
         so = subprocess.Popen(cmd, shell=True)
         time.sleep(2)
 
-    cmd = "bin/irecovery -f kernel.img4"
+    cmd = "bin/irecovery -f StagedFiles/kernel.img4"
     so = subprocess.Popen(cmd, shell=True)
     time.sleep(2)
 
@@ -663,7 +667,7 @@ def img4stuff(deviceModel, iOSVersion, useCustomLogo, bootlogoPath, areWeLocal, 
     so = subprocess.Popen(f"./resources/bin/img4tool -c resources/StagedFiles/ibec.img4 -p resources/StagedFiles/ibec.patched -s resources/shsh.shsh", stdout=subprocess.PIPE, shell=True)
     output = so.stdout.read()
 
-    so = subprocess.Popen(f"./resources/bin/img4tool -c resources/StagedFiles/ramdisk.img4 -p resources/StagedFiles/018-75901-013.dmg -t rdsk -s resources/shsh.shsh", stdout=subprocess.PIPE, shell=True)
+    so = subprocess.Popen(f"./resources/bin/img4tool -c resources/StagedFiles/ramdisk.img4 -p resources/018-75901-013.dmg -t rdsk -s resources/shsh.shsh", stdout=subprocess.PIPE, shell=True)
     output = so.stdout.read()
 
     if useCustomLogo:
@@ -760,11 +764,13 @@ def img4stuff(deviceModel, iOSVersion, useCustomLogo, bootlogoPath, areWeLocal, 
             so = subprocess.Popen(f"./resources/bin/Kernel64Patcher resources/StagedFiles/kernel.raw resources/StagedFiles/kernel.patched -a", stdout=subprocess.PIPE, shell=True)
             output = so.stdout.read()
             patchThing()
+            print("Patched AMFI from kernel")            
             so = subprocess.Popen(f"./resources/bin/img4tool -e -s resources/shsh.shsh -m resources/IM4M", stdout=subprocess.PIPE, shell=True)
             output = so.stdout.read()
-            print("Patched AMFI from kernel")
-            so = subprocess.Popen(f"./resources/bin/img4 -i resources/StagedFiles/kernel.im4p -o resources/StagedFiles/kernel.img4 -M resources/IM4M -T krnl -P resources/kc.bpatch", stdout=subprocess.PIPE, shell=True)
+            so = subprocess.Popen(f"./resources/bin/img4tool -c resources/StagedFiles/kernel.im4p -t rkrn resources/StagedFiles/kernel.patched", stdout=subprocess.PIPE, shell=True)
             output = so.stdout.read()
+            so = subprocess.Popen(f"./resources/bin/img4tool -c resources/StagedFiles/kernel.img4 -p resources/StagedFiles/kernel.im4p -m ../IM4M", stdout=subprocess.PIPE, shell=True)
+            output = so.stdout.read()                        
             print("Finished patching kernel!\nContinuing with PyBoot...\n")
         else:
             print("Failed to extract raw kernel, continuing without AMFI kernel patches...")
