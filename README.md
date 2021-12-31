@@ -21,7 +21,7 @@ This is not a finished tool and is very much so a work in progress.
 
 ## Usage
 ```
-E.G './odts.py -i iBridge2,5 6.1'
+E.G './odts.py -i iBridge2,5 6.1 --amfi'
 
 Ontrack Data Transfer Setup - A tool for signing and loading firmware images that allow us to ramdisk and mount the volume on T2 Mac devices. Written by Martin, @hotshotmc.
 
