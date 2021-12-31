@@ -39,7 +39,7 @@ optional arguments:
   -c, --credits       List credits
   -f, --fix           Fix img4tool/irecovery related issues
 
-EXAMPLE USAGE: ./odts.py -i iBridge2,5 6.1  -a
+EXAMPLE USAGE: ./odts.py -i iBridge2,5 6.1  --amfi
 ```
 
 ## Instructions
