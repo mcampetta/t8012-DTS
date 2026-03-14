@@ -5,6 +5,9 @@
 These flows are safe and non-destructive:
 
 - `python odts.py --diagnostic --json`
+- `python odts.py --device-state`
+- `python odts.py --device-state --json`
+- `python odts.py --device-state --verbose`
 - `python odts.py setup`
 - `python odts.py setup --fetch-missing --dry-run`
 - `python odts.py --validate-firmware --manifest /path/to/BuildManifest.plist --board-config j132ap`
@@ -34,10 +37,11 @@ These flows are safe and non-destructive:
    - `resources/bin/tsschecker`
    - `resources/ipwndfu8012/checkm8.py`
 2. Install Python runtime deps.
-3. Run diagnostics.
-4. Run firmware validation on the intended IPSW/manifest.
-5. Run dry-run operational flows.
-6. Only then attempt live device interaction.
+3. Run `python odts.py --device-state`.
+4. Run diagnostics.
+5. Run firmware validation on the intended IPSW/manifest.
+6. Run dry-run operational flows.
+7. Only then attempt live device interaction.
 
 ## Test Coverage
 
@@ -50,4 +54,3 @@ Current automated tests only cover safe logic:
 - firmware manifest parsing
 - firmware artifact planning
 - stage reporting
-

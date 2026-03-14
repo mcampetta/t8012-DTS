@@ -24,6 +24,18 @@ Fetch supported missing repo-local resources:
 python odts.py setup --fetch-missing
 ```
 
+Inspect connected device state:
+
+```bash
+python odts.py --device-state
+```
+
+Verbose device inspection:
+
+```bash
+python odts.py --device-state --verbose
+```
+
 Diagnostic only:
 
 ```bash
@@ -48,6 +60,7 @@ python odts.py -q /path/to/restore.ipsw iBridge2,5 --dry-run
 - `setup --fetch-missing` is the explicit bootstrap path for supported repo-local resources only.
 - setup currently supports repo-local fetches for pinned legacy payload archives such as Fugu and the bundled `img4tool` binary.
 - setup intentionally does not run Homebrew, install Python packages, write into `/usr/local`, or disable security settings.
+- `--device-state` is the first non-destructive command to run when hardware is attached.
 - `--fix` is intentionally removed as an operational repair path.
 - The tool still depends on legacy bundled exploit/tool payloads for real boot actions.
 - If Defender or another AV quarantines `resources/bin/*`, restore the file before trying to execute on the target Mac checkout.

@@ -19,6 +19,7 @@ from odtslib.config import (
     TOOL_VERSION,
 )
 from odtslib.device import is_a10_a11_or_t2, parse_irecovery_query, read_board_config
+from odtslib.device_state import inspect_device_state
 from odtslib.diagnostics import collect_diagnostics
 from odtslib.exceptions import DependencyError, DeviceStateError, ODTSError, UnsupportedHostError
 from odtslib.firmware_pipeline import (
@@ -67,11 +68,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-c", "--credits", action="store_true", help="Show credits")
     parser.add_argument("-f", "--fix", action="store_true", help="Deprecated legacy repair flow")
     parser.add_argument("--diagnostic", action="store_true", help="Collect a non-destructive environment report")
+    parser.add_argument("--device-state", action="store_true", help="Inspect connected device state without modifying it")
     parser.add_argument("--validate-firmware", action="store_true", help="Inspect a manifest or local IPSW and report the planned firmware artifact flow")
     parser.add_argument("--manifest", help="Path to a BuildManifest.plist for non-destructive firmware validation")
     parser.add_argument("--board-config", help="Explicit board config for firmware validation, for example j132ap")
     parser.add_argument("--dry-run", action="store_true", help="Plan actions without executing device or filesystem mutations")
     parser.add_argument("--json", action="store_true", help="Emit diagnostic output as JSON")
+    parser.add_argument("--verbose", action="store_true", help="Emit more detailed operator-facing output for inspection commands")
     parser.add_argument("--log-level", default="INFO", help="Logging level (DEBUG, INFO, WARNING, ERROR)")
     parser.add_argument("--log-file", help="Optional path to a log file")
     parser.add_argument("--fetch-missing", action="store_true", help="With `setup`, download supported missing repo-local resources")
@@ -320,6 +323,9 @@ def main() -> int:
             return 0
         if args.credits:
             print_credits()
+            return 0
+        if args.device_state:
+            print(inspect_device_state(json_output=args.json, verbose=args.verbose))
             return 0
         if args.validate_firmware:
             return run_firmware_validation(args, logger)
