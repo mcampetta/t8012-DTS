@@ -1,62 +1,49 @@
+from __future__ import annotations
+
 import plistlib
-import sys
-import os
 import shutil
+from pathlib import Path
 from zipfile import ZipFile, is_zipfile
 
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+LOCAL_IPSW_DIR = PROJECT_ROOT / "IPSW"
+
+
+def read_manifest(path: str | Path, return_version: bool):
+    manifest_path = Path(path)
+    with manifest_path.open("rb") as handle:
+        plist = plistlib.load(handle)
+
+    if return_version:
+        return plist["ProductVersion"]
+    return plist["SupportedProductTypes"]
+
+
 def readmanifest(path, flag):
-    fn = path
-    with open(fn, 'rb') as f:
-        pl = plistlib.load(f)
+    return read_manifest(path, flag)
 
-    if flag:
-        result = pl['ProductVersion']
-    else:
-        supportedModels = str(pl['SupportedProductTypes'])
-        supportedModels1 = supportedModels.replace("[", "")
-        supportedModels2 = supportedModels1.replace("'", "")
-        result = supportedModels2.replace("]", "")
 
-    return result
+def unzip_ipsw(path: str | Path) -> str:
+    source = Path(path)
+    if not source.exists():
+        raise FileNotFoundError(f"IPSW path does not exist: {source}")
+    if not is_zipfile(source):
+        raise ValueError(f"{source} is not a valid IPSW/zip archive.")
+
+    if LOCAL_IPSW_DIR.exists():
+        shutil.rmtree(LOCAL_IPSW_DIR)
+    LOCAL_IPSW_DIR.mkdir(parents=True, exist_ok=True)
+
+    with ZipFile(source, "r") as archive:
+        archive.extractall(LOCAL_IPSW_DIR)
+
+    manifest_path = LOCAL_IPSW_DIR / "BuildManifest.plist"
+    if not manifest_path.exists():
+        raise FileNotFoundError("Extracted IPSW does not contain BuildManifest.plist.")
+
+    return str(read_manifest(manifest_path, return_version=True))
+
 
 def unzipIPSW(path):
-    if is_zipfile(path): # First of all, check to see if fname is an actual ipsw, by verifying the file is a zip archive (ipsw's are just zip files).
-        print(f'{path} is a zip archive!')
-    else:
-        sys.exit(f'"{path}" is not a zip archive! Are you sure you inserted the correct ipsw path?')
-    
-    print("Starting IPSW unzipping")
-    outputFolder = "IPSW"
-    newpath = path.rstrip()
-    fname = str(newpath)
-    testFile = os.path.exists(fname)
-
-    if os.path.exists('IPSW'):
-        shutil.rmtree('IPSW')
-        os.mkdir('IPSW')
-    elif not os.path.exists('IPSW'):
-        os.mkdir('IPSW')
-
-    while not testFile or not fname.endswith!=(".ipsw"):
-        print("Invalid filepath/filename.\nPlease try again with a valid filepath/filename.")
-        fname = input("Enter the path to the IPSW file (Or drag and drop the IPSW into this window):\n")
-        newpath = fname.rstrip()
-        fname = str(newpath)
-        testFile = os.path.exists(fname)
-
-    if testFile and fname.endswith(".ipsw"):
-
-        print("IPSW found at given path...")
-        print("Cleaning up old files...")
-        shutil.rmtree("IPSW")
-        print("Unzipping..")
-
-        with ZipFile(fname, 'r') as zip_ref:
-            zip_ref.extractall(outputFolder)
-        source = ("IPSW/Firmware/dfu/")
-        dest1 = os.getcwd()
-
-        files = os.listdir(source)
-
-        for f in files:
-            shutil.move(source + f, dest1 + "/IPSW/")
+    return unzip_ipsw(path)

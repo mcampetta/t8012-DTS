@@ -1,13 +1,23 @@
 import os
-import subprocess
 import time
-import shutil
-import requests
 import re
-import stat
-
-from zipfile import ZipFile, is_zipfile
 from resources.ipwndfu import checkm8, dfu, usbexec 
+from odtslib.config import PROJECT_ROOT
+from odtslib.tool_wrappers import GenericBinaryTool, ToolRegistry
+
+TOOLS = ToolRegistry()
+
+
+def _run_repo_binary(name: str, relative_path: str, *args: str) -> str:
+    tool = GenericBinaryTool(name, PROJECT_ROOT / relative_path)
+    result = tool.execute(*args, cwd=PROJECT_ROOT)
+    return result.stdout or result.stderr
+
+
+def _run_python_tool(interpreter: str, script_path: str, *args: str) -> str:
+    tool = GenericBinaryTool(interpreter, interpreter)
+    result = tool.execute(PROJECT_ROOT / script_path, *args, cwd=PROJECT_ROOT)
+    return result.stdout or result.stderr
 
 def decryptKBAG(kbag: str):
 
@@ -33,7 +43,9 @@ def decryptKBAG(kbag: str):
     else:
         print("Not supported...")
         exit(0)
-    ivkey = os.popen(cmd).read()
+    tool_path = cmd.split()[0]
+    tool_args = cmd.split()[1:]
+    ivkey = _run_repo_binary("legacy-ipwndfu", tool_path, *tool_args)
     ivkey = re.sub(r'Decrypting with \w+ GID key\.', '', ivkey)
     ivkey = ivkey[1:-1]
 
@@ -74,7 +86,7 @@ def pwndfumodeKeys():
             if not os.path.exists("checkm8.py"):
                 os.chdir("resources/ipwndfu8010")
             cmd = './ipwndfu -p'
-            so = os.popen(cmd).read()
+            so = _run_repo_binary("ipwndfu8010", "resources/ipwndfu8010/ipwndfu", "-p")
             print(so)
             if "ERROR: No Apple device" in so:
                 print("Exploit failed, reboot device into DFU mode and press enter to re-run checkm8")
@@ -98,7 +110,7 @@ def pwndfumodeKeys():
             if not os.path.exists("checkm8.py"):
                 os.chdir("resources/ipwndfu8012")
             cmd = './ipwndfu -p'
-            so = os.popen(cmd).read()
+            so = _run_repo_binary("ipwndfu8012", "resources/ipwndfu8012/ipwndfu", "-p")
             print(so)
             time.sleep(5)
             device = dfu.acquire_device()
@@ -116,7 +128,7 @@ def pwndfumodeKeys():
             if not os.path.exists("checkm8.py"):
                 os.chdir("resources/ipwndfuX")
             cmd = './ipwndfu -p'
-            so = os.popen(cmd).read()
+            so = _run_repo_binary("ipwndfuX", "resources/ipwndfuX/ipwndfu", "-p")
             print(so)
             if "ERROR: No Apple device" in so:
                 print("Exploit failed, reboot device into DFU mode and press enter to re-run checkm8")
@@ -142,7 +154,7 @@ def pwndfumodeKeys():
             if not os.path.exists("checkm8.py"):
                 os.chdir("resources/ipwndfuKeys")
             cmd = './ipwndfu -p'
-            so = os.popen(cmd).read()
+            so = _run_repo_binary("ipwndfuKeys", "resources/ipwndfuKeys/ipwndfu", "-p")
             print(so)
             if "ERROR: No Apple device" in so:
                 print("Exploit failed, reboot device into DFU mode and press enter to re-run checkm8")
@@ -173,19 +185,14 @@ def pwndfumode():
     dfu.release_device(device)
 
     if "CPID:8960" in serial_number:
-        if not os.path.exists("iPwnder32"):
-            os.chdir("resources/bin")
-        cmd = './iPwnder32 -p'
-        so = os.popen(cmd).read()
+        so = TOOLS.ipwnder32.execute("-p", cwd=PROJECT_ROOT).stdout
         
         if "Device is now in pwned DFU mode!" in so:
             print("Exploit worked!")
-            os.chdir("../..")
             return
         else:
             print("Exploit failed, reboot device into DFU mode and press enter to re-run checkm8")
             input()
-            os.chdir("../..")
             pwndfumode()
 
     elif "CPID:8965" in serial_number:
@@ -194,8 +201,7 @@ def pwndfumode():
         runexploit = checkm8.exploit()
         if runexploit:
             print("Exploit worked!")
-            cmd = 'python2.7 rmsigchks.py'
-            so = os.popen(cmd).read()
+            so = _run_python_tool("python2.7", "resources/ipwndfu/rmsigchks.py")
             print(so)
             os.chdir("../..")
         else:
@@ -203,49 +209,12 @@ def pwndfumode():
             input()
             pwndfumode()
     elif "CPID:8010" in serial_number:
-
-        # I don't want to bundle Fugu just to make sure that people know it hasnt been modified 
-        # I'd rather just quickly download the binary from Linus's github if it hasnt been already to avoid any issues
-
-        if os.path.exists("resources/Fugu_8010/Fugu"):
-            pass
-        else:
-            os.mkdir("resources/Fugu_8010")
-
-            print("Downloading latest Fugu release from LinusHenze's github...")
-                
-            if os.path.exists("fugu.zip"):
-                os.remove("fugu.zip")
-
-            url = "https://github.com/LinusHenze/Fugu/releases/download/v0.4/Fugu_v0.4.zip"
-            r = requests.get(url, allow_redirects=True)
-
-            open('fugu.zip', 'wb').write(r.content)
-
-            if os.path.exists("fugu"):
-                shutil.rmtree("fugu")
-                os.mkdir("fugu")
-            else:
-                os.mkdir("fugu")
-            
-            shutil.move("fugu.zip", "fugu/fugu.zip")
-            os.chdir("fugu")
-
-            with ZipFile('fugu.zip', 'r') as zipObj:
-                
-                zipObj.extractall()
-            
-            os.chdir("../")
-
-            shutil.move("fugu/fugu", "resources/Fugu_8010/Fugu")
-            shutil.move("fugu/shellcode", "resources/Fugu_8010/shellcode")
-
-            st = os.stat('resources/Fugu_8010/Fugu')
-            os.chmod('resources/Fugu_8010/Fugu', st.st_mode | stat.S_IEXEC)
-
-            shutil.rmtree("fugu")
-
-            print("Fugu has now been installed!")
+        if not os.path.exists("resources/Fugu_8010/Fugu"):
+            print(
+                "Missing legacy Fugu payload at resources/Fugu_8010/Fugu. "
+                "Runtime auto-download was removed; install it manually before using CPID:8010 support."
+            )
+            exit(2)
 
         if "PWND:[checkm8]" in serial_number:
             print("Device already in PWNDFU mode, not re-running exploit..")
@@ -253,8 +222,7 @@ def pwndfumode():
         else:
             if not os.path.exists("Fugu"):
                 os.chdir("resources/Fugu_8010")
-            cmd = './Fugu rmsigchks'
-            so = os.popen(cmd).read()
+            so = _run_repo_binary("Fugu", "resources/Fugu_8010/Fugu", "rmsigchks")
             #print(so)
             if "Exploiting iDevice: FAILED!" in so:
                 print("Exploit failed, however re-expoilting without rebooting might work. Attempting now...")
@@ -280,8 +248,7 @@ def pwndfumode():
         else:
             if not os.path.exists("checkm8.py"):
                 os.chdir("resources/ipwndfu8012")
-            cmd = './ipwndfu -p'
-            so = os.popen(cmd).read()
+            so = _run_repo_binary("ipwndfu8012", "resources/ipwndfu8012/ipwndfu", "-p")
             print(so)
             time.sleep(5)
             device = dfu.acquire_device()
@@ -289,8 +256,7 @@ def pwndfumode():
             dfu.release_device(device)
             if "PWND:[checkm8]" in serial_number:
                 print("Exploit worked! patching out signature checks")
-                cmd = 'python nop_image4.py'
-                so = os.popen(cmd).read()
+                so = _run_python_tool("python", "resources/ipwndfu8012/nop_image4.py")
                 print(so)   
 
 
@@ -301,15 +267,13 @@ def pwndfumode():
         else:
             if not os.path.exists("checkm8.py"):
                 os.chdir("resources/ipwndfuX")
-            cmd = './ipwndfu -p'
-            so = os.popen(cmd).read()
+            so = _run_repo_binary("ipwndfuX", "resources/ipwndfuX/ipwndfu", "-p")
             print(so)
             if "ERROR: No Apple device" in so:
                 print("Exploit failed, reboot device into DFU mode and press enter to re-run checkm8")
                 input()
                 pwndfumode()
-            cmd = './ipwndfu --patch'
-            so = os.popen(cmd).read()
+            so = _run_repo_binary("ipwndfuX", "resources/ipwndfuX/ipwndfu", "--patch")
             print(so)
             os.chdir("../..")
             time.sleep(5)
@@ -324,26 +288,22 @@ def pwndfumode():
                 print("Exploit failed...\nReboot and try again...")
                 exit(2)
     elif "CPID:8000" in serial_number:
-        cmd = './resources/bin/eclipsa8000'
-        so = os.popen(cmd).read()
+        so = TOOLS.eclipsa8000.execute(cwd=PROJECT_ROOT).stdout
         print(so)
         print("Eclipsa doesn't allow me to see if the exploit worked or not =(\nJust have to assume it did, if it didn't then reboot into DFU mode and re-run PyBoot")
         return
     elif "CPID:8003" in serial_number:
-        cmd = './resources/bin/eclipsa8003'
-        so = os.popen(cmd).read()
+        so = TOOLS.eclipsa8003.execute(cwd=PROJECT_ROOT).stdout
         print(so)
         print("Eclipsa doesn't allow me to see if the exploit worked or not =(\nJust have to assume it did, if it didn't then reboot into DFU mode and re-run PyBoot")
         return
     elif "CPID:7000" in serial_number:
-        cmd = './resources/bin/eclipsa7000'
-        so = os.popen(cmd).read()
+        so = TOOLS.eclipsa7000.execute(cwd=PROJECT_ROOT).stdout
         print(so)
         print("Eclipsa doesn't allow me to see if the exploit worked or not =(\nJust have to assume it did, if it didn't then reboot into DFU mode and re-run PyBoot")
         return
     elif "CPID:7001" in serial_number:
-        cmd = './resources/bin/eclipsa8000'
-        so = os.popen(cmd).read()
+        so = TOOLS.eclipsa8000.execute(cwd=PROJECT_ROOT).stdout
         print(so)
         print("Eclipsa doesn't allow me to see if the exploit worked or not =(\nJust have to assume it did, if it didn't then reboot into DFU mode and re-run PyBoot")
         return
