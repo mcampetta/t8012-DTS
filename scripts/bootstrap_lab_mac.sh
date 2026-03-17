@@ -10,7 +10,6 @@ BREW_PACKAGES=(
   pyenv
   libusb
   libirecovery
-  openssl@1.1
   readline
   xz
   pkg-config
@@ -27,6 +26,34 @@ log() {
 fail() {
   printf '[bootstrap] ERROR: %s\n' "$*" >&2
   exit 1
+}
+
+validate_json_file() {
+  local path="$1"
+  local label="$2"
+  [[ -f "$path" ]] || fail "$label output file is missing: $path"
+  [[ -s "$path" ]] || fail "$label output file is empty: $path"
+  if ! "$PROJECT_ROOT/venv/bin/python" - <<'PY' "$path" "$label"
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+label = sys.argv[2]
+try:
+    json.loads(path.read_text(encoding="utf-8"))
+except json.JSONDecodeError as exc:
+    print(f"[bootstrap] ERROR: {label} output is not valid JSON: {path}", file=sys.stderr)
+    print(f"[bootstrap] ERROR: {exc}", file=sys.stderr)
+    print(f"[bootstrap] ERROR: first lines from {path}:", file=sys.stderr)
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    for line in lines[:5]:
+        print(f"[bootstrap]   {line}", file=sys.stderr)
+    sys.exit(1)
+PY
+  then
+    exit 1
+  fi
 }
 
 require_macos() {
@@ -69,6 +96,16 @@ ensure_brew_packages() {
   done
 }
 
+ensure_brew_package() {
+  local pkg="$1"
+  if brew list --versions "$pkg" >/dev/null 2>&1; then
+    log "brew package present: $pkg"
+  else
+    log "Installing brew package: $pkg"
+    brew install "$pkg"
+  fi
+}
+
 ensure_pyenv() {
   export PYENV_ROOT
   export PATH="$PYENV_ROOT/bin:$PATH"
@@ -77,18 +114,34 @@ ensure_pyenv() {
 }
 
 ensure_python27() {
-  local openssl_prefix readline_prefix xz_prefix
-  openssl_prefix="$(brew --prefix openssl@1.1)"
-  readline_prefix="$(brew --prefix readline)"
-  xz_prefix="$(brew --prefix xz)"
-
-  export CPPFLAGS="-I${openssl_prefix}/include -I${readline_prefix}/include -I${xz_prefix}/include"
-  export LDFLAGS="-L${openssl_prefix}/lib -L${readline_prefix}/lib -L${xz_prefix}/lib"
-  export PKG_CONFIG_PATH="${openssl_prefix}/lib/pkgconfig:${readline_prefix}/lib/pkgconfig:${xz_prefix}/lib/pkgconfig"
-
-  if pyenv versions --bare | grep -qx "$LEGACY_PYTHON_VERSION"; then
-    log "pyenv Python present: $LEGACY_PYTHON_VERSION"
+  local existing_python
+  existing_python="$PYENV_ROOT/versions/$LEGACY_PYTHON_VERSION/bin/python2.7"
+  if [[ -x "$existing_python" ]] && "$existing_python" --version >/dev/null 2>&1; then
+    log "Python $LEGACY_PYTHON_VERSION already installed and usable"
+    log "OpenSSL status: skipped because not needed"
   else
+    local openssl_formula openssl_prefix readline_prefix xz_prefix
+    openssl_formula=""
+    if brew list --versions openssl@3 >/dev/null 2>&1; then
+      openssl_formula="openssl@3"
+      log "OpenSSL status: already satisfied via $openssl_formula"
+    elif brew list --versions openssl@1.1 >/dev/null 2>&1; then
+      openssl_formula="openssl@1.1"
+      log "OpenSSL status: already satisfied via $openssl_formula"
+    else
+      openssl_formula="openssl@3"
+      log "OpenSSL status: installing $openssl_formula as a build dependency"
+      ensure_brew_package "$openssl_formula"
+    fi
+
+    openssl_prefix="$(brew --prefix "$openssl_formula")"
+    readline_prefix="$(brew --prefix readline)"
+    xz_prefix="$(brew --prefix xz)"
+
+    export CPPFLAGS="-I${openssl_prefix}/include -I${readline_prefix}/include -I${xz_prefix}/include"
+    export LDFLAGS="-L${openssl_prefix}/lib -L${readline_prefix}/lib -L${xz_prefix}/lib"
+    export PKG_CONFIG_PATH="${openssl_prefix}/lib/pkgconfig:${readline_prefix}/lib/pkgconfig:${xz_prefix}/lib/pkgconfig"
+
     log "Installing Python $LEGACY_PYTHON_VERSION via pyenv"
     pyenv install -s "$LEGACY_PYTHON_VERSION"
   fi
@@ -143,8 +196,10 @@ verify_libusb() {
 run_validations() {
   log "Running non-destructive legacy runtime check"
   "$PROJECT_ROOT/venv/bin/python" odts.py --check-legacy-pwn-runtime --json > "$LEGACY_RUNTIME_JSON"
+  validate_json_file "$LEGACY_RUNTIME_JSON" "legacy runtime check"
   log "Running non-destructive preflight with board config $BOARD_CONFIG"
   "$PROJECT_ROOT/venv/bin/python" odts.py --preflight --board-config "$BOARD_CONFIG" --json > "$PREFLIGHT_JSON"
+  validate_json_file "$PREFLIGHT_JSON" "preflight"
 }
 
 print_summary() {
@@ -156,8 +211,27 @@ from pathlib import Path
 runtime_path = Path(sys.argv[1])
 preflight_path = Path(sys.argv[2])
 export_path = Path(sys.argv[3])
-runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
-preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+
+def load_json(path: Path, label: str) -> dict:
+    if not path.exists():
+        print(f"[bootstrap] ERROR: {label} output file is missing: {path}", file=sys.stderr)
+        raise SystemExit(1)
+    raw = path.read_text(encoding="utf-8", errors="replace")
+    if not raw.strip():
+        print(f"[bootstrap] ERROR: {label} output file is empty: {path}", file=sys.stderr)
+        raise SystemExit(1)
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        print(f"[bootstrap] ERROR: {label} output is not valid JSON: {path}", file=sys.stderr)
+        print(f"[bootstrap] ERROR: {exc}", file=sys.stderr)
+        print(f"[bootstrap] ERROR: first lines from {path}:", file=sys.stderr)
+        for line in raw.splitlines()[:5]:
+            print(f"[bootstrap]   {line}", file=sys.stderr)
+        raise SystemExit(1)
+
+runtime = load_json(runtime_path, "legacy runtime check")
+preflight = load_json(preflight_path, "preflight")
 
 print("[bootstrap] Summary")
 print(f"[bootstrap] legacy export file: {export_path}")

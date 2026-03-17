@@ -439,7 +439,10 @@ def run_pwn_only(args: argparse.Namespace, logger) -> int:
 def main() -> int:
     parser = build_parser()
     args = parser.parse_args()
-    logger = configure_logging(args.log_level, args.log_file)
+    effective_log_level = args.log_level
+    if args.json and effective_log_level.upper() == "INFO":
+        effective_log_level = "ERROR"
+    logger = configure_logging(effective_log_level, args.log_file)
 
     try:
         if args.version:

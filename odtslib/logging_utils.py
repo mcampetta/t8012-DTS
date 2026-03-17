@@ -12,7 +12,7 @@ def configure_logging(level: str = "INFO", log_file: str | None = None) -> loggi
 
     formatter = logging.Formatter("%(levelname)s %(message)s")
 
-    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler = logging.StreamHandler(sys.stderr)
     stream_handler.setFormatter(formatter)
     logger.addHandler(stream_handler)
 
@@ -22,4 +22,3 @@ def configure_logging(level: str = "INFO", log_file: str | None = None) -> loggi
         logger.addHandler(file_handler)
 
     return logger
-
