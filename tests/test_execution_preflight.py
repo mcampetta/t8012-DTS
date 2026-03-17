@@ -116,7 +116,8 @@ class ExecutionPreflightTests(unittest.TestCase):
             with patch("odtslib.execution_preflight._tool_report", return_value=fake_tool_report):
                 with patch("odtslib.execution_preflight._touchpoints", return_value=[]):
                     with patch("odtslib.execution_preflight.LOCAL_IPSW_DIR", self.temp_dir / "empty-ipsw"):
-                        preflight = build_execution_preflight(manifest, None)
+                        with patch("odtslib.execution_preflight.SHSH_PATH", self.temp_dir / "missing.shsh"):
+                            preflight = build_execution_preflight(manifest, None)
         self.assertIn("readiness", preflight)
         self.assertEqual(preflight["readiness"]["first_execution_step_name"], "enter-pwned-dfu")
         self.assertEqual(preflight["readiness"]["first_execution_step_classification"], "unverified")

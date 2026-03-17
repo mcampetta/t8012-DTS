@@ -1065,3 +1065,45 @@ cat IPSW/.odts-remote-payload-cache.json
 - the runtime boundary is now explicit and host-checkable
 - the next host-only step is to provide an explicit Python 2.7 interpreter path
 - even after that, vendored libusbfinder packaging may still remain the active unresolved host-side issue
+
+## 2026-03-17: SHSH Fallback Strategy
+
+### Goal
+
+- make SHSH acquisition try the repo-aligned build first for compatibility
+- fall back to the latest signed build only if Apple rejects the repo-aligned build
+- always normalize the resulting blob to `resources/shsh.shsh`
+- record which build was actually used
+
+### Changes Applied
+
+- updated `odtslib/shsh_material.py`
+  - default acquisition strategy is now `repo-aligned then latest signed`
+  - report now records `attempted_builds`, `fallback_used`, `used_build`, and `used_latest_signed`
+- updated `tests/test_shsh_material.py`
+- updated `tests/test_execution_preflight.py`
+
+### Commands Run
+
+```bash
+./venv/bin/python -m unittest tests.test_shsh_material tests.test_execution_preflight
+./venv/bin/python odts.py --acquire-shsh --json
+./venv/bin/python odts.py --acquire-shsh
+```
+
+### Observed Outputs
+
+- repo-aligned build `19P647` was attempted first and rejected by Apple for `iBridge2,14`
+- acquisition then fell back automatically to latest signed build `23P3120`
+- normalized signing material was written to `resources/shsh.shsh`
+- host-only compatibility probe succeeded:
+  - `im4m_generation_succeeded=True`
+  - `available_artifacts_wrapped_successfully=7`
+  - `available_artifacts_rejected=0`
+  - `host_side_mismatch_rejected=False`
+
+### Current Working State
+
+- default SHSH acquisition is now compatibility-first with automatic signed-build fallback
+- the report clearly records both the attempted repo-aligned build and the final build used
+- current normalized signing material for this lab device was acquired from signed build `23P3120`

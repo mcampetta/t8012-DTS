@@ -90,6 +90,23 @@ class _FailingRegistry:
         self.tsschecker = _FailingTSSChecker(b"")
 
 
+class _FallbackBuildContext:
+    def __call__(self, product, *, build_override, latest_signed):
+        if latest_signed:
+            return {
+                "build": "23P3120",
+                "version": "10.3",
+                "source": "latest signed build for connected device context",
+                "manifest_path": None,
+            }
+        return {
+            "build": "19P647",
+            "version": "6.1",
+            "source": "repo-aligned default manifest",
+            "manifest_path": "/tmp/BuildManifest.plist",
+        }
+
+
 class SHSHMaterialTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = Path(tempfile.mkdtemp(prefix="odts-shsh-test-"))
@@ -129,7 +146,7 @@ class SHSHMaterialTests(unittest.TestCase):
             with patch("odtslib.shsh_material._build_context", return_value={"build": "19P647", "version": "6.1", "source": "repo-aligned default manifest", "manifest_path": "/tmp/BuildManifest.plist"}):
                 with patch("odtslib.shsh_material.ToolRegistry", return_value=_FailingRegistry()):
                     with patch("odtslib.shsh_material.SHSH_PATH", self.output_path):
-                        report = acquire_shsh_for_connected_device()
+                        report = acquire_shsh_for_connected_device(build="19P647")
         self.assertFalse(report["acquired"])
         self.assertEqual(report["write_status"], "not_written")
         self.assertIn("-B j152fap", report["command"])
@@ -139,6 +156,26 @@ class SHSHMaterialTests(unittest.TestCase):
         self.assertTrue(report["manifest_supplied_explicitly"])
         self.assertTrue(any(path.endswith("tsschecker.log") for path in report["temp_files"]))
 
+    def test_acquire_shsh_falls_back_to_latest_signed_after_repo_aligned_failure(self):
+        with patch("odtslib.shsh_material.collect_device_state_report", return_value=_device_report()):
+            with patch("odtslib.shsh_material._build_context", side_effect=_FallbackBuildContext()):
+                with patch("odtslib.shsh_material._latest_signed_build_context", return_value={"build": "23P3120", "version": "10.3", "source": "latest signed build for connected device context", "manifest_path": None}):
+                    with patch("odtslib.shsh_material.SHSH_PATH", self.output_path):
+                        with patch("odtslib.shsh_material._host_side_compatibility_probe", return_value={"manifest_build": "19P647", "im4m_generation_succeeded": True, "available_artifacts_wrapped_successfully": 2, "available_artifacts_rejected": 0, "host_side_mismatch_rejected": False}):
+                            with patch("odtslib.shsh_material.ToolRegistry", side_effect=[_FailingRegistry(), _FakeRegistry(b"ticket-data")]):
+                                report = acquire_shsh_for_connected_device()
+        self.assertTrue(report["acquired"])
+        self.assertTrue(report["fallback_used"])
+        self.assertFalse(report["requested_latest_signed"])
+        self.assertTrue(report["used_latest_signed"])
+        self.assertEqual(report["acquisition_strategy"], "repo-aligned then latest signed")
+        self.assertEqual(report["used_build"], "23P3120")
+        self.assertEqual(len(report["attempted_builds"]), 2)
+        self.assertEqual(report["attempted_builds"][0]["build"], "19P647")
+        self.assertFalse(report["attempted_builds"][0]["acquired"])
+        self.assertEqual(report["attempted_builds"][1]["build"], "23P3120")
+        self.assertTrue(report["attempted_builds"][1]["acquired"])
+
     def test_acquire_shsh_latest_signed_marks_requested_mode(self):
         with patch("odtslib.shsh_material.collect_device_state_report", return_value=_device_report()):
             with patch("odtslib.shsh_material._build_context", return_value={"build": "23P3120", "version": "9.3", "source": "latest signed build for connected device context", "manifest_path": None}):
@@ -147,6 +184,7 @@ class SHSHMaterialTests(unittest.TestCase):
                         with patch("odtslib.shsh_material._host_side_compatibility_probe", return_value={"manifest_build": "19P647", "im4m_generation_succeeded": True, "available_artifacts_wrapped_successfully": 1, "available_artifacts_rejected": 1, "host_side_mismatch_rejected": True}):
                             report = acquire_shsh_for_connected_device(latest_signed=True)
         self.assertTrue(report["requested_latest_signed"])
+        self.assertTrue(report["used_latest_signed"])
         self.assertEqual(report["selected_build"], "23P3120")
         self.assertEqual(report["build_source"], "latest signed build for connected device context")
         self.assertTrue(report["host_compatibility"]["host_side_mismatch_rejected"])

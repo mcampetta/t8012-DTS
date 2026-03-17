@@ -145,16 +145,16 @@ def _host_side_compatibility_probe(*, shsh_path: Path, board_config: str) -> dic
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-def acquire_shsh_for_connected_device(*, build: str | None = None, latest_signed: bool = False) -> dict[str, object]:
-    device_report = collect_device_state_report()
-    product = str(device_report.identifiers.get("PRODUCT") or "")
-    model = str(device_report.identifiers.get("MODEL") or "")
-    ecid = str(device_report.identifiers.get("ECID") or "")
-
-    if device_report.state != "identifiers_ready" or not product or not model or not ecid:
-        raise ODTSError("SHSH acquisition requires a connected device with ECID, PRODUCT, and MODEL available.")
-
-    build_context = _build_context(product, build_override=build, latest_signed=latest_signed)
+def _acquire_shsh_with_context(
+    *,
+    product: str,
+    model: str,
+    ecid: str,
+    device_state: str,
+    build_context: dict[str, str],
+    latest_signed_requested: bool,
+    latest_signed_used: bool,
+) -> dict[str, object]:
     tools = ToolRegistry()
     tsschecker = tools.tsschecker.inspect()
     if not tsschecker.runnable or not tsschecker.path:
@@ -202,7 +202,7 @@ def acquire_shsh_for_connected_device(*, build: str | None = None, latest_signed
         except ODTSError as exc:
             return {
                 "device_detected": True,
-                "device_state": device_report.state,
+                "device_state": device_state,
                 "product": product,
                 "board_config": model,
                 "ecid": ecid,
@@ -216,7 +216,8 @@ def acquire_shsh_for_connected_device(*, build: str | None = None, latest_signed
                     "path": tsschecker.path,
                     "selected_candidate": tsschecker.selected_candidate,
                 },
-                "requested_latest_signed": latest_signed,
+                "requested_latest_signed": latest_signed_requested,
+                "used_latest_signed": latest_signed_used,
                 "working_directory": str(temp_dir),
                 "command": command_preview,
                 "temp_files": sorted(str(path) for path in temp_dir.iterdir()),
@@ -237,7 +238,7 @@ def acquire_shsh_for_connected_device(*, build: str | None = None, latest_signed
 
         return {
             "device_detected": True,
-            "device_state": device_report.state,
+            "device_state": device_state,
             "product": product,
             "board_config": model,
             "ecid": ecid,
@@ -251,7 +252,8 @@ def acquire_shsh_for_connected_device(*, build: str | None = None, latest_signed
                 "path": tsschecker.path,
                 "selected_candidate": tsschecker.selected_candidate,
             },
-            "requested_latest_signed": latest_signed,
+            "requested_latest_signed": latest_signed_requested,
+            "used_latest_signed": latest_signed_used,
             "working_directory": str(temp_dir),
             "command": command_preview,
             "temp_files": sorted(str(path) for path in temp_dir.iterdir()),
@@ -271,6 +273,82 @@ def acquire_shsh_for_connected_device(*, build: str | None = None, latest_signed
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
+def acquire_shsh_for_connected_device(*, build: str | None = None, latest_signed: bool = False) -> dict[str, object]:
+    device_report = collect_device_state_report()
+    product = str(device_report.identifiers.get("PRODUCT") or "")
+    model = str(device_report.identifiers.get("MODEL") or "")
+    ecid = str(device_report.identifiers.get("ECID") or "")
+
+    if device_report.state != "identifiers_ready" or not product or not model or not ecid:
+        raise ODTSError("SHSH acquisition requires a connected device with ECID, PRODUCT, and MODEL available.")
+
+    attempted_builds: list[dict[str, object]] = []
+    primary_context = _build_context(product, build_override=build, latest_signed=latest_signed)
+    primary_report = _acquire_shsh_with_context(
+        product=product,
+        model=model,
+        ecid=ecid,
+        device_state=device_report.state,
+        build_context=primary_context,
+        latest_signed_requested=latest_signed,
+        latest_signed_used=latest_signed,
+    )
+    attempted_builds.append(
+        {
+            "build": primary_context["build"],
+            "version": primary_context["version"],
+            "source": primary_context["source"],
+            "acquired": primary_report.get("acquired", False),
+            "failure_detail": primary_report.get("failure_detail"),
+        }
+    )
+
+    if primary_report.get("acquired") or build or latest_signed:
+        primary_report["attempted_builds"] = attempted_builds
+        primary_report["fallback_used"] = False
+        primary_report["acquisition_strategy"] = (
+            "explicit latest signed"
+            if latest_signed
+            else "explicit build override"
+            if build
+            else "repo-aligned first"
+        )
+        primary_report["used_build"] = primary_report["selected_build"]
+        return primary_report
+
+    fallback_context = _latest_signed_build_context(product)
+    if fallback_context["build"] == primary_context["build"]:
+        primary_report["attempted_builds"] = attempted_builds
+        primary_report["fallback_used"] = False
+        primary_report["acquisition_strategy"] = "repo-aligned first"
+        primary_report["used_build"] = primary_report["selected_build"]
+        return primary_report
+
+    fallback_report = _acquire_shsh_with_context(
+        product=product,
+        model=model,
+        ecid=ecid,
+        device_state=device_report.state,
+        build_context=fallback_context,
+        latest_signed_requested=latest_signed,
+        latest_signed_used=True,
+    )
+    attempted_builds.append(
+        {
+            "build": fallback_context["build"],
+            "version": fallback_context["version"],
+            "source": fallback_context["source"],
+            "acquired": fallback_report.get("acquired", False),
+            "failure_detail": fallback_report.get("failure_detail"),
+        }
+    )
+    fallback_report["attempted_builds"] = attempted_builds
+    fallback_report["fallback_used"] = True
+    fallback_report["acquisition_strategy"] = "repo-aligned then latest signed"
+    fallback_report["used_build"] = fallback_report["selected_build"]
+    return fallback_report
+
+
 def render_shsh_acquisition(report: dict[str, object], *, json_output: bool) -> str:
     if json_output:
         return json.dumps(report, indent=2, sort_keys=True)
@@ -285,6 +363,10 @@ def render_shsh_acquisition(report: dict[str, object], *, json_output: bool) -> 
         f"Selected build: {report['selected_build']}",
         f"Selected version: {report['selected_version']}",
         f"Build source: {report['build_source']}",
+        f"Acquisition strategy: {report.get('acquisition_strategy') or 'unknown'}",
+        f"Used build: {report.get('used_build') or report['selected_build']}",
+        f"Fallback used: {report.get('fallback_used', False)}",
+        f"Used latest signed build: {report.get('used_latest_signed', False)}",
         f"Manifest supplied explicitly: {report['manifest_supplied_explicitly']}",
         f"Manifest path: {report['manifest_path'] or 'none'}",
         f"Source tool: {report['tool']['name']} ({report['tool']['path']})",
@@ -300,6 +382,15 @@ def render_shsh_acquisition(report: dict[str, object], *, json_output: bool) -> 
         lines.append("Temp files:")
         for path in report["temp_files"]:
             lines.append(f"  - {path}")
+    if report.get("attempted_builds"):
+        lines.append("Attempted builds:")
+        for attempt in report["attempted_builds"]:
+            status = "acquired" if attempt["acquired"] else "failed"
+            lines.append(
+                f"  - {attempt['build']} ({attempt['version']}, {attempt['source']}): {status}"
+            )
+            if attempt.get("failure_detail"):
+                lines.append(f"    detail={attempt['failure_detail']}")
     compatibility = report.get("host_compatibility")
     if compatibility:
         lines.append("Host-only compatibility probe:")
