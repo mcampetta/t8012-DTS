@@ -559,3 +559,113 @@ cat IPSW/.odts-remote-payload-cache.json
 - Local and remote payload sourcing paths are now both available
 - Payload sourcing is no longer the active blocker on this machine
 - Remaining unknown is execution-side only
+
+## 2026-03-17 Enter Pwned DFU Preview
+
+### Scope
+
+- Instrument the first execution-side step for observability only
+- Do not execute the exploit path
+- Capture the real launcher, interpreter, and file-dependency contract
+
+### Commands Run
+
+```bash
+./venv/bin/python odts.py --preview-enter-pwned-dfu
+./venv/bin/python odts.py --preview-enter-pwned-dfu --json
+./venv/bin/python -m unittest tests.test_pwn_preview tests.test_remote_ipsw tests.test_payload_layout tests.test_execution_preflight
+```
+
+### Observed Outputs
+
+- Preview call path for the current T8012 branch:
+  - `resources.pwn.pwndfumode()`
+  - `resources/ipwndfu8012/ipwndfu -p`
+  - re-acquire DFU device and inspect for `PWND:[checkm8]`
+  - `python resources/ipwndfu8012/nop_image4.py`
+- Preview verified referenced files exist
+- Safe launcher probe result for `resources/ipwndfu8012/ipwndfu`:
+  - `missing_interpreter`
+  - `script shebang requires missing interpreter /usr/bin/python`
+- `resources/pwn.py` currently invokes `nop_image4.py` through bare `python`
+- Host interpreter result:
+  - `python`: absent
+  - `python2`: absent
+  - `python2.7`: absent
+- Static compatibility analysis found Python 2 markers in:
+  - `resources/ipwndfu8012/ipwndfu`
+  - `resources/ipwndfu8012/dfu.py`
+  - `resources/ipwndfu8012/usbexec.py`
+
+### Changes Applied
+
+- Added `--preview-enter-pwned-dfu`
+- Added `odtslib/pwn_preview.py`
+- Added `ENTER_PWNED_DFU_ANALYSIS.md`
+- Added preview regression tests in `tests/test_pwn_preview.py`
+
+### Current Boundary
+
+- `enter-pwned-dfu` remains `unverified`
+- preflight payload and tool blockers are cleared
+- the current blocker is execution-environment compatibility and live-step observability
+
+### Exact Stop Conditions For Any Future Controlled Test
+
+- do not proceed while `/usr/bin/python` is still missing for the `ipwndfu8012` shebang path
+- do not proceed while bare `python` is still missing for the `nop_image4.py` launch path
+- do not proceed while the transitive helper chain still requires unresolved Python 2 compatibility
+- stop immediately on any unexpected device disconnect or unplanned mode transition
+- stop immediately if observed output diverges from the previewed first-step expectations
+
+## 2026-03-17 Enter Pwned DFU Runtime Audit
+
+### Scope
+
+- Expand the preview into a full static runtime compatibility audit
+- Trace the local import chain behind `ipwndfu -p` and `nop_image4.py`
+- Keep the work fully non-destructive and hardware-independent
+
+### Commands Run
+
+```bash
+./venv/bin/python odts.py --audit-enter-pwned-dfu-runtime
+./venv/bin/python odts.py --audit-enter-pwned-dfu-runtime --json
+./venv/bin/python -m unittest tests.test_pwn_runtime_audit tests.test_pwn_preview tests.test_remote_ipsw tests.test_payload_layout tests.test_execution_preflight tests.test_tool_wrappers tests.test_device_state tests.test_firmware_pipeline
+```
+
+### Observed Outputs
+
+- Static runtime audit confirmed entry points:
+  - `resources/ipwndfu8012/ipwndfu -p`
+  - `python resources/ipwndfu8012/nop_image4.py`
+- Local imported-file chain includes:
+  - `dfu.py`
+  - `usbexec.py`
+  - `checkm8.py`
+  - `dfuexec.py`
+  - `libusbfinder/__init__.py`
+  - vendored `usb/...` modules
+- Current blocker chain is:
+  - `interpreter_missing`
+  - `path_assumption`
+  - `python2_syntax_dependency`
+  - `macOS runtime assumption`
+- Current conclusion:
+  - the remaining issue is primarily runtime compatibility, not current device behavior
+  - device behavior is still unknown, but the chain does not currently reach that boundary on this host
+
+### Changes Applied
+
+- Added `--audit-enter-pwned-dfu-runtime`
+- Added `odtslib/pwn_runtime_audit.py`
+- Added `PWN_RUNTIME_AUDIT.md`
+- Added `tests/test_pwn_runtime_audit.py`
+
+### What Would Still Remain Unknown If Runtime Blockers Were Solved
+
+- actual exploit behavior on the connected device
+- whether `PWND:[checkm8]` appears after the exploit launch
+- whether USB re-enumeration timing matches the legacy sleep-and-reacquire assumption
+- whether `nop_image4.py` succeeds after a real pwned DFU transition
+- whether later live execution-side boot/send steps behave as planned

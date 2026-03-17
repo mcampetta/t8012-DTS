@@ -27,6 +27,11 @@ from odtslib.execution_preflight import (
     render_execution_preflight,
 )
 from odtslib.payload_layout import inspect_payload_layout, render_payload_layout
+from odtslib.pwn_preview import build_enter_pwned_dfu_preview, render_enter_pwned_dfu_preview
+from odtslib.pwn_runtime_audit import (
+    build_enter_pwned_dfu_runtime_audit,
+    render_enter_pwned_dfu_runtime_audit,
+)
 from odtslib.remote_ipsw import inspect_remote_payload_layout, render_remote_payload_layout
 from odtslib.diagnostics import collect_diagnostics
 from odtslib.exceptions import DependencyError, DeviceStateError, ODTSError, UnsupportedHostError
@@ -82,6 +87,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--preflight", action="store_true", help="Run a non-destructive execution preflight for the selected or connected device")
     parser.add_argument("--payload-layout", action="store_true", help="Inspect or prepare the expected local payload layout for the planned components")
     parser.add_argument("--remote-payload-layout", metavar="DEVICE", help="Inspect or prepare planned payloads directly from a remote restore IPSW without full local download")
+    parser.add_argument("--preview-enter-pwned-dfu", action="store_true", help="Preview the first execution-side step with file, interpreter, and launcher diagnostics only")
+    parser.add_argument("--audit-enter-pwned-dfu-runtime", action="store_true", help="Statically audit the full legacy runtime compatibility chain for enter-pwned-dfu without execution")
     parser.add_argument("--extract-planned-payloads", action="store_true", help="With --payload-layout or --remote-payload-layout, extract only the planned payload files into a safe local directory")
     parser.add_argument("--payload-root", help="Optional destination root for planned payload layout inspection or extraction")
     parser.add_argument("--build", help="Optional build override for remote payload layout lookup, for example 19P647")
@@ -306,6 +313,20 @@ def run_remote_payload_layout(args: argparse.Namespace, logger) -> int:
     return 0
 
 
+def run_preview_enter_pwned_dfu(args: argparse.Namespace, logger) -> int:
+    logger.info("Previewing enter-pwned-dfu without hardware interaction")
+    report = build_enter_pwned_dfu_preview()
+    print(render_enter_pwned_dfu_preview(report, json_output=args.json))
+    return 0
+
+
+def run_audit_enter_pwned_dfu_runtime(args: argparse.Namespace, logger) -> int:
+    logger.info("Auditing enter-pwned-dfu runtime compatibility without execution")
+    report = build_enter_pwned_dfu_runtime_audit()
+    print(render_enter_pwned_dfu_runtime_audit(report, json_output=args.json))
+    return 0
+
+
 def run_local_ipsw_flow(args: argparse.Namespace, logger) -> int:
     from resources import img4, pwn
 
@@ -439,6 +460,10 @@ def main() -> int:
         if args.device_state:
             print(inspect_device_state(json_output=args.json, verbose=args.verbose))
             return 0
+        if args.preview_enter_pwned_dfu:
+            return run_preview_enter_pwned_dfu(args, logger)
+        if args.audit_enter_pwned_dfu_runtime:
+            return run_audit_enter_pwned_dfu_runtime(args, logger)
         if args.remote_payload_layout:
             return run_remote_payload_layout(args, logger)
         if args.payload_layout:
