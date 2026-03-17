@@ -19,7 +19,15 @@ from odtslib.config import (
     TOOL_VERSION,
 )
 from odtslib.device import is_a10_a11_or_t2, parse_irecovery_query, read_board_config
-from odtslib.device_state import inspect_device_state
+from odtslib.device_state import collect_device_state_report, inspect_device_state
+from odtslib.execution_preflight import (
+    build_execution_graph,
+    build_execution_preflight,
+    render_execution_graph,
+    render_execution_preflight,
+)
+from odtslib.payload_layout import inspect_payload_layout, render_payload_layout
+from odtslib.remote_ipsw import inspect_remote_payload_layout, render_remote_payload_layout
 from odtslib.diagnostics import collect_diagnostics
 from odtslib.exceptions import DependencyError, DeviceStateError, ODTSError, UnsupportedHostError
 from odtslib.firmware_pipeline import (
@@ -70,6 +78,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--diagnostic", action="store_true", help="Collect a non-destructive environment report")
     parser.add_argument("--device-state", action="store_true", help="Inspect connected device state without modifying it")
     parser.add_argument("--validate-firmware", action="store_true", help="Inspect a manifest or local IPSW and report the planned firmware artifact flow")
+    parser.add_argument("--execution-graph", action="store_true", help="Render the non-destructive planned execution graph for the selected or connected device")
+    parser.add_argument("--preflight", action="store_true", help="Run a non-destructive execution preflight for the selected or connected device")
+    parser.add_argument("--payload-layout", action="store_true", help="Inspect or prepare the expected local payload layout for the planned components")
+    parser.add_argument("--remote-payload-layout", metavar="DEVICE", help="Inspect or prepare planned payloads directly from a remote restore IPSW without full local download")
+    parser.add_argument("--extract-planned-payloads", action="store_true", help="With --payload-layout or --remote-payload-layout, extract only the planned payload files into a safe local directory")
+    parser.add_argument("--payload-root", help="Optional destination root for planned payload layout inspection or extraction")
+    parser.add_argument("--build", help="Optional build override for remote payload layout lookup, for example 19P647")
     parser.add_argument("--manifest", help="Path to a BuildManifest.plist for non-destructive firmware validation")
     parser.add_argument("--board-config", help="Explicit board config for firmware validation, for example j132ap")
     parser.add_argument("--dry-run", action="store_true", help="Plan actions without executing device or filesystem mutations")
@@ -153,7 +168,16 @@ def run_diagnostics(json_output: bool) -> int:
         print(f"  {path}")
     print("External tools:")
     for tool in report["external_tools"]:
-        print(f"  {tool['name']}: exists={tool['exists']} runnable={tool['runnable']} version={tool['version']}")
+        print(
+            f"  {tool['name']}: exists={tool['exists']} runnable={tool['runnable']} "
+            f"path={tool['path']} selected={tool.get('selected_candidate')} version={tool['version']}"
+        )
+        for candidate in tool.get("candidates", []):
+            selected = " selected" if candidate.get("selected") else ""
+            print(
+                f"    - {candidate['label']}{selected}: status={candidate['status']} "
+                f"path={candidate.get('path')} detail={candidate['detail']}"
+            )
     return 0
 
 
@@ -191,6 +215,94 @@ def run_firmware_validation(args: argparse.Namespace, logger) -> int:
         "artifact_plan": render_plan_report(plan),
     }
     print(json.dumps(report, indent=2, sort_keys=True) if args.json else json.dumps(report, indent=2))
+    return 0
+
+
+def _resolve_manifest_path_for_safe_planning(args: argparse.Namespace, logger) -> Path:
+    if args.manifest:
+        manifest_path = Path(args.manifest).expanduser().resolve()
+        if not manifest_path.exists():
+            raise ODTSError(f"Manifest path does not exist: {manifest_path}")
+        return manifest_path
+    if args.ipsw:
+        ipsw_path = Path(args.ipsw[0]).expanduser().resolve()
+        if not ipsw_path.exists():
+            raise ODTSError(f"Local IPSW path does not exist: {ipsw_path}")
+        logger.info("Extracting local IPSW for non-destructive planning from %s", ipsw_path)
+        ipsw.unzip_ipsw(ipsw_path)
+        return LOCAL_IPSW_DIR / "BuildManifest.plist"
+    bundled_manifest = PROJECT_ROOT / "resources/ipwndfu8012/BuildManifest.plist"
+    if bundled_manifest.exists():
+        return bundled_manifest
+    raise ODTSError("No manifest source available. Use --manifest PATH or -q PATH DEVICE.")
+
+
+def run_execution_graph(args: argparse.Namespace, logger) -> int:
+    manifest_path = _resolve_manifest_path_for_safe_planning(args, logger)
+    manifest = load_manifest_for_planning(manifest_path)
+    graph = build_execution_graph(manifest, args.board_config)
+    print(render_execution_graph(graph, json_output=args.json))
+    return 0
+
+
+def run_execution_preflight(args: argparse.Namespace, logger) -> int:
+    manifest_path = _resolve_manifest_path_for_safe_planning(args, logger)
+    manifest = load_manifest_for_planning(manifest_path)
+    preflight = build_execution_preflight(manifest, args.board_config)
+    print(render_execution_preflight(preflight, json_output=args.json))
+    return 0
+
+
+def run_payload_layout(args: argparse.Namespace, logger) -> int:
+    manifest_path = None if args.ipsw else _resolve_manifest_path_for_safe_planning(args, logger)
+    board_config = args.board_config
+    if not board_config:
+        device_report = collect_device_state_report()
+        board_config = str(device_report.identifiers.get("MODEL") or "")
+        if not board_config:
+            raise ODTSError("Payload layout inspection requires --board-config or a connected device with a detected MODEL.")
+    report = inspect_payload_layout(
+        ipsw_path=args.ipsw[0] if args.ipsw else None,
+        manifest_path=manifest_path,
+        board_config=board_config,
+        destination_root=args.payload_root or LOCAL_IPSW_DIR,
+        extract=args.extract_planned_payloads,
+    )
+    print(render_payload_layout(report, json_output=args.json))
+    return 0
+
+
+def run_remote_payload_layout(args: argparse.Namespace, logger) -> int:
+    board_config = args.board_config
+    if not board_config:
+        device_report = collect_device_state_report()
+        board_config = str(device_report.identifiers.get("MODEL") or "")
+        if not board_config:
+            raise ODTSError(
+                "Remote payload layout inspection requires --board-config or a connected device with a detected MODEL."
+            )
+    selected_build = args.build
+    if not selected_build:
+        try:
+            manifest_path = _resolve_manifest_path_for_safe_planning(args, logger)
+            manifest = load_manifest_for_planning(manifest_path)
+            selected_build = manifest.product_build_version
+        except ODTSError:
+            selected_build = None
+    logger.info(
+        "Inspecting remote payload layout for device=%s board=%s build=%s",
+        args.remote_payload_layout,
+        board_config,
+        selected_build or "latest signed",
+    )
+    report = inspect_remote_payload_layout(
+        device=args.remote_payload_layout,
+        board_config=board_config,
+        build=selected_build,
+        destination_root=args.payload_root or LOCAL_IPSW_DIR,
+        extract=args.extract_planned_payloads,
+    )
+    print(render_remote_payload_layout(report, json_output=args.json))
     return 0
 
 
@@ -327,6 +439,14 @@ def main() -> int:
         if args.device_state:
             print(inspect_device_state(json_output=args.json, verbose=args.verbose))
             return 0
+        if args.remote_payload_layout:
+            return run_remote_payload_layout(args, logger)
+        if args.payload_layout:
+            return run_payload_layout(args, logger)
+        if args.execution_graph:
+            return run_execution_graph(args, logger)
+        if args.preflight:
+            return run_execution_preflight(args, logger)
         if args.validate_firmware:
             return run_firmware_validation(args, logger)
         if args.diagnostic and not any([args.ios, args.ipsw, args.pwn]):

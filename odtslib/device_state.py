@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from enum import Enum
 
 from .device import parse_irecovery_query
-from .tool_wrappers import IRecoveryTool, ToolRegistry
+from .tool_wrappers import CandidateValidation, ToolRegistry
 
 
 class DeviceStateName(str, Enum):
@@ -62,7 +62,7 @@ STATE_DEFINITIONS = {
         DeviceStateName.IDENTIFIERS_READY,
         "Required identifiers were read successfully and the device appears compatible with later dry-run stages.",
         "Proceed to `--dry-run` or `--validate-firmware` checks before any live action.",
-        ("none"),
+        ("none",),
     ),
     DeviceStateName.TOOL_COMM_FAILURE: DeviceStateDefinition(
         DeviceStateName.TOOL_COMM_FAILURE,
@@ -82,11 +82,14 @@ STATE_DEFINITIONS = {
 @dataclass
 class ToolProbe:
     tool: str
+    path: str | None
     success: bool
     stdout: str
     stderr: str
     returncode: int
     detail: str
+    selected_candidate: str | None
+    candidates: list[CandidateValidation]
 
 
 @dataclass
@@ -121,7 +124,7 @@ def classify_device_state(parsed_identifiers: dict[str, str], tool_success: bool
     return DeviceStateName.USB_PRESENT_UNKNOWN
 
 
-def inspect_device_state(*, json_output: bool = False, verbose: bool = False) -> str | DeviceStateReport:
+def collect_device_state_report() -> DeviceStateReport:
     tools = ToolRegistry()
     irecovery = tools.irecovery
 
@@ -129,16 +132,22 @@ def inspect_device_state(*, json_output: bool = False, verbose: bool = False) ->
     parsed: dict[str, str]
     evidence: list[str] = []
     try:
+        selection = irecovery.inspect()
         result = irecovery.query(dry_run=False)
         probe = ToolProbe(
             tool="irecovery",
+            path=selection.path,
             success=result.returncode == 0,
             stdout=result.stdout,
             stderr=result.stderr,
             returncode=result.returncode,
             detail="query succeeded" if result.returncode == 0 else "query returned non-zero exit",
+            selected_candidate=selection.selected_candidate,
+            candidates=selection.candidates,
         )
         parsed = parse_irecovery_query(result.stdout)
+        if selection.path:
+            evidence.append(f"irecovery selected: {selection.path} ({selection.selected_candidate})")
         if result.stdout.strip():
             evidence.append("irecovery produced query output")
         if parsed.get("ECID"):
@@ -148,13 +157,17 @@ def inspect_device_state(*, json_output: bool = False, verbose: bool = False) ->
         if parsed.get("CPID"):
             evidence.append(f"CPID detected: {parsed['CPID']}")
     except Exception as exc:
+        selection = irecovery.inspect()
         probe = ToolProbe(
             tool="irecovery",
+            path=selection.path,
             success=False,
             stdout="",
             stderr=str(exc),
             returncode=1,
             detail="query failed",
+            selected_candidate=selection.selected_candidate,
+            candidates=selection.candidates,
         )
         parsed = {}
         evidence.append(f"irecovery query failed: {exc}")
@@ -171,14 +184,20 @@ def inspect_device_state(*, json_output: bool = False, verbose: bool = False) ->
             "ECID": parsed.get("ECID"),
             "BDID": parsed.get("BDID"),
             "CPID": parsed.get("CPID"),
+            "PRODUCT": parsed.get("PRODUCT"),
             "MODEL": parsed.get("MODEL") or parsed.get("PRODUCT"),
+            "MODE": parsed.get("MODE"),
         },
         tools=[probe],
         likely_next_step=definition.likely_next_step,
         likely_failure_causes=list(definition.likely_failure_causes),
         compatible_with_later_stages=compatible,
     )
+    return report
 
+
+def inspect_device_state(*, json_output: bool = False, verbose: bool = False) -> str | DeviceStateReport:
+    report = collect_device_state_report()
     if json_output:
         return json.dumps(asdict(report), indent=2, sort_keys=True)
 
@@ -195,8 +214,18 @@ def inspect_device_state(*, json_output: bool = False, verbose: bool = False) ->
         lines.append(f"  - {key}: {value or 'not found'}")
     lines.append("Tools:")
     for tool in report.tools:
-        lines.append(f"  - {tool.tool}: success={tool.success} returncode={tool.returncode} detail={tool.detail}")
+        lines.append(
+            f"  - {tool.tool}: success={tool.success} returncode={tool.returncode} "
+            f"path={tool.path or 'not selected'} selected={tool.selected_candidate or 'none'} detail={tool.detail}"
+        )
         if verbose:
+            lines.append("    candidates:")
+            for candidate in tool.candidates:
+                selected = " selected" if candidate.selected else ""
+                lines.append(
+                    f"      {candidate.label}{selected}: status={candidate.status} "
+                    f"path={candidate.path or 'not found'} detail={candidate.detail}"
+                )
             if tool.stdout.strip():
                 lines.append("    stdout:")
                 for line in tool.stdout.strip().splitlines():
