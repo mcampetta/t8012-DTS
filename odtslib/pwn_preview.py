@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 import logging
 import re
-import shutil
 from pathlib import Path
 
 from .config import PROJECT_ROOT
+from .legacy_pwn_runtime import inspect_legacy_python_contract, inspect_libusb_packaging
 from .subprocess_utils import format_command, run_command
 
 LOGGER = logging.getLogger(__name__)
@@ -52,11 +52,11 @@ def _python2_markers(path: Path) -> list[str]:
     return markers
 
 
-def _command_probe(path: Path, *args: str) -> dict[str, object]:
-    command = [path, *args]
+def _command_probe(command: list[str | Path]) -> dict[str, object]:
     LOGGER.debug("Safely probing launcher command %s", format_command(command))
-    shebang = _shebang(path)
-    if shebang:
+    path = Path(command[0])
+    shebang = _shebang(path) if path.exists() else None
+    if shebang and len(command) == 1:
         interpreter = shebang[2:].strip().split()[0]
         if interpreter.startswith("/") and not Path(interpreter).exists():
             return {
@@ -91,20 +91,14 @@ def _command_probe(path: Path, *args: str) -> dict[str, object]:
     }
 
 
-def _interpreter_status(name: str) -> dict[str, object]:
-    resolved = shutil.which(name)
-    LOGGER.debug("Checking interpreter %s -> %s", name, resolved)
-    return {
-        "name": name,
-        "resolved_path": resolved,
-        "present": bool(resolved),
-    }
-
-
 def build_enter_pwned_dfu_preview() -> dict[str, object]:
     LOGGER.info("Building non-destructive enter-pwned-dfu preview")
-    ipwndfu_command = [str(IPWNDFU_8012), "-p"]
-    nop_image4_command = ["python", str(NOP_IMAGE4)]
+    python_contract = inspect_legacy_python_contract()
+    selected = python_contract["selected_interpreter"]
+    selected_interpreter = str(selected["resolved_path"]) if selected else f"<set {python_contract['env_var']} or install python2>"
+    ipwndfu_command = [selected_interpreter, str(IPWNDFU_8012), "-p"]
+    nop_image4_command = [selected_interpreter, str(NOP_IMAGE4)]
+    libusb_packaging = inspect_libusb_packaging()
 
     file_dependencies = [
         _file_status(PWN_MODULE, role="legacy orchestrator"),
@@ -116,14 +110,23 @@ def build_enter_pwned_dfu_preview() -> dict[str, object]:
         _file_status(IPWNDFU_8012_HEAP_FIX, role="T8012 heap fix imported by ipwndfu"),
     ]
 
-    ipwndfu_probe = _command_probe(IPWNDFU_8012)
-    python_status = _interpreter_status("python")
-    python2_status = _interpreter_status("python2")
-    python27_status = _interpreter_status("python2.7")
+    if selected:
+        ipwndfu_probe = _command_probe([selected["resolved_path"], IPWNDFU_8012])
+    else:
+        ipwndfu_probe = {
+            "command": format_command(ipwndfu_command),
+            "safe_to_probe": True,
+            "runnable": False,
+            "status": "missing_interpreter_contract",
+            "returncode": None,
+            "stdout": "",
+            "stderr": f"No interpreter selected under {python_contract['env_var']} / python2.7 / python2 contract.",
+        }
 
     ipwndfu_markers = _python2_markers(IPWNDFU_8012)
     dfu_markers = _python2_markers(IPWNDFU_8012_DFU)
     usbexec_markers = _python2_markers(IPWNDFU_8012_USBEXEC)
+    preview_clean = bool(selected) and libusb_packaging["packaging_ready"]
 
     analysis = {
         "step": "enter-pwned-dfu",
@@ -135,9 +138,9 @@ def build_enter_pwned_dfu_preview() -> dict[str, object]:
         "call_graph": [
             "odts.py:run_pwn_only or local/remote live flow",
             "resources.pwn.pwndfumode()",
-            "resources/ipwndfu8012/ipwndfu -p",
+            "explicit legacy python2 interpreter -> resources/ipwndfu8012/ipwndfu -p",
             "re-acquire DFU device and inspect serial for PWND:[checkm8]",
-            "python resources/ipwndfu8012/nop_image4.py",
+            "explicit legacy python2 interpreter -> resources/ipwndfu8012/nop_image4.py",
         ],
         "commands": [
             {
@@ -165,12 +168,12 @@ def build_enter_pwned_dfu_preview() -> dict[str, object]:
                 "shebang": _shebang(IPWNDFU_8012),
                 "python2_markers": ipwndfu_markers,
                 "requires_python2_runtime": bool(ipwndfu_markers),
-                "interpreter_candidates": [python2_status, python27_status],
+                "runtime_contract": python_contract,
             },
             {
                 "target": str(NOP_IMAGE4),
-                "invoked_as": "python resources/ipwndfu8012/nop_image4.py",
-                "python_launcher": python_status,
+                "invoked_as": format_command(nop_image4_command),
+                "runtime_contract": python_contract,
                 "transitive_python2_markers": {
                     str(IPWNDFU_8012_DFU): dfu_markers,
                     str(IPWNDFU_8012_USBEXEC): usbexec_markers,
@@ -178,11 +181,18 @@ def build_enter_pwned_dfu_preview() -> dict[str, object]:
                 "effective_runtime_requires_python2": bool(dfu_markers or usbexec_markers),
             },
         ],
+        "libusb_packaging": libusb_packaging,
+        "runtime_boundary_preview_clean": preview_clean,
+        "runtime_boundary_reason": (
+            "Explicit legacy Python interpreter selected and libusb packaging assumptions are satisfied."
+            if preview_clean
+            else "Legacy runtime contract or libusb packaging assumptions remain unresolved."
+        ),
         "files": file_dependencies,
         "environment_assumptions": [
             "Current working directory is the repository root.",
-            "The ipwndfu8012 launcher relies on executing a Python 2 script via its shebang.",
-            "The nop_image4 helper is invoked through bare `python` from resources/pwn.py.",
+            "The T8012 legacy chain is expected to run only with an explicit Python 2 runtime contract.",
+            "The nop_image4 helper should be launched through the same explicit legacy interpreter.",
             "Sibling-module imports are expected to resolve from resources/ipwndfu8012.",
             "PyUSB/libusb access must be available to the legacy DFU helpers at runtime.",
         ],
@@ -218,14 +228,14 @@ def build_enter_pwned_dfu_preview() -> dict[str, object]:
             ],
         },
         "likely_failure_points_on_modern_macos": [
-            "resources/ipwndfu8012/ipwndfu requires /usr/bin/python, which is absent on modern macOS installs.",
-            "resources/pwn.py invokes nop_image4.py via bare `python`, but no `python` launcher exists on this host.",
+            "No explicit Python 2 runtime is available unless provided via the declared legacy runtime contract.",
             "nop_image4.py imports local helpers with Python 2 syntax, so a Python 3 fallback would still fail.",
-            "Legacy DFU helpers depend on PyUSB/libusb availability outside the modern wrapper layer.",
+            "Vendored libusbfinder targets older macOS/libusb packaging expectations.",
             "The legacy path reacquires the device after a sleep and assumes stable USB re-enumeration timing.",
         ],
         "stop_conditions_for_future_controlled_test": [
-            "Do not proceed if the launcher interpreter contract is unresolved.",
+            "Do not proceed if the explicit legacy Python runtime contract is unresolved.",
+            "Do not proceed if libusb packaging assumptions remain unresolved.",
             "Do not proceed if preview reports missing dependency files.",
             "Do not proceed if safe launcher probing fails with bad interpreter or missing module errors.",
             "Stop immediately on any unexpected USB disconnect or mode transition in a future live test.",
@@ -245,6 +255,8 @@ def render_enter_pwned_dfu_preview(report: dict[str, object], *, json_output: bo
         f"Module: {report['module']}",
         f"Helper: {report['helper']}",
         f"CWD: {report['cwd']}",
+        f"Preview-Clean Runtime Boundary: {report['runtime_boundary_preview_clean']}",
+        f"Runtime Boundary Reason: {report['runtime_boundary_reason']}",
         "Call graph:",
     ]
     for entry in report["call_graph"]:
@@ -271,6 +283,18 @@ def render_enter_pwned_dfu_preview(report: dict[str, object], *, json_output: bo
             lines.append(f"    requires_python2_runtime={entry['requires_python2_runtime']}")
         if "effective_runtime_requires_python2" in entry:
             lines.append(f"    effective_runtime_requires_python2={entry['effective_runtime_requires_python2']}")
+        contract = entry.get("runtime_contract")
+        if contract:
+            selected = contract.get("selected_interpreter")
+            lines.append(f"    selected_interpreter={selected['resolved_path'] if selected else 'none'}")
+    lines.append("Dependency packaging:")
+    packaging = report["libusb_packaging"]
+    lines.append(f"  - host_macos_version={packaging['host_macos_version']}")
+    lines.append(f"  - host_supported_by_vendored_libusbfinder={packaging['host_supported_by_vendored_libusbfinder']}")
+    lines.append(f"  - pyusb_available={packaging['pyusb_available']}")
+    lines.append(f"  - pyusb_libusb_backend_available={packaging['pyusb_libusb_backend_available']}")
+    if packaging.get("issue"):
+        lines.append(f"  - issue={packaging['issue']}")
     lines.append("Files:")
     for file_report in report["files"]:
         lines.append(

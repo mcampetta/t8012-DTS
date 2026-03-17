@@ -3,6 +3,7 @@ import time
 import re
 from resources.ipwndfu import checkm8, dfu, usbexec 
 from odtslib.config import PROJECT_ROOT
+from odtslib.legacy_pwn_runtime import legacy_python_script_command
 from odtslib.tool_wrappers import GenericBinaryTool, ToolRegistry
 
 TOOLS = ToolRegistry()
@@ -17,6 +18,13 @@ def _run_repo_binary(name: str, relative_path: str, *args: str) -> str:
 def _run_python_tool(interpreter: str, script_path: str, *args: str) -> str:
     tool = GenericBinaryTool(interpreter, interpreter)
     result = tool.execute(PROJECT_ROOT / script_path, *args, cwd=PROJECT_ROOT)
+    return result.stdout or result.stderr
+
+
+def _run_legacy_python_script(script_path: str, *args: str) -> str:
+    command = legacy_python_script_command(script_path, *args)
+    tool = GenericBinaryTool("legacy-python-runtime", command[0])
+    result = tool.execute(*command[1:], cwd=PROJECT_ROOT)
     return result.stdout or result.stderr
 
 def decryptKBAG(kbag: str):
@@ -248,7 +256,7 @@ def pwndfumode():
         else:
             if not os.path.exists("checkm8.py"):
                 os.chdir("resources/ipwndfu8012")
-            so = _run_repo_binary("ipwndfu8012", "resources/ipwndfu8012/ipwndfu", "-p")
+            so = _run_legacy_python_script("resources/ipwndfu8012/ipwndfu", "-p")
             print(so)
             time.sleep(5)
             device = dfu.acquire_device()
@@ -256,7 +264,7 @@ def pwndfumode():
             dfu.release_device(device)
             if "PWND:[checkm8]" in serial_number:
                 print("Exploit worked! patching out signature checks")
-                so = _run_python_tool("python", "resources/ipwndfu8012/nop_image4.py")
+                so = _run_legacy_python_script("resources/ipwndfu8012/nop_image4.py")
                 print(so)   
 
 

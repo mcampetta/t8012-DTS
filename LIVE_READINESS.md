@@ -26,23 +26,46 @@ The remaining blocker is execution-side uncertainty:
 
 Current preview finding:
 
-- `resources/ipwndfu8012/ipwndfu` requires missing interpreter `/usr/bin/python`
-- `resources/pwn.py` invokes `nop_image4.py` via bare `python`, which is also absent on this host
-- transitive helper modules under `resources/ipwndfu8012` still contain Python 2 syntax
+- host shim cleanup is in place:
+  - `resources/ipwndfu8012/ipwndfu` now declares `#!/usr/bin/env python2`
+  - `resources/pwn.py` now launches the T8012 chain through an explicit legacy-runtime contract
+- current remaining preview blockers:
+  - no explicit legacy Python 2 interpreter is currently selected
+  - vendored `libusbfinder` packaging assumptions are not clean for this macOS host
+- transitive helper modules under `resources/ipwndfu8012` still contain Python 2 syntax, but that is now tracked as part of the declared legacy runtime contract rather than as an implicit launcher failure
 
 Current runtime-audit finding:
 
 - the blocker chain is primarily runtime compatibility, not current device behavior
 - direct runtime blockers:
   - `interpreter_missing`
-  - `path_assumption`
-  - `python2_syntax_dependency`
-  - `macOS runtime assumption`
+  - `external_dependency_packaging_issue`
 - broader transitive chain reaches legacy helper modules including:
   - `checkm8.py`
   - `dfuexec.py`
   - `libusbfinder/__init__.py`
   - vendored `usb/...` modules
+
+Current runtime-check finding:
+
+- `preview_clean_runtime_boundary=False`
+- active host-side issues on this machine:
+  - `missing_pyusb`
+  - `missing_libusb`
+  - `libusbfinder_packaging_issue`
+- selected host-side interpreter state:
+  - `interpreter_ready=True`
+  - `module_import_ready=False`
+  - `libusb_backend_ready=False`
+  - `vendored_libusbfinder_ready=False`
+- host bootstrap support now exists:
+  - `./scripts/bootstrap_lab_mac.sh`
+- runtime checker now separates:
+  - `interpreter_ready`
+  - `module_import_ready`
+  - `libusb_backend_ready`
+  - `vendored_libusbfinder_ready`
+  - `preview_clean_runtime_boundary`
 
 Traceability:
 
@@ -51,6 +74,10 @@ Traceability:
 - see `REMOTE_IPSW_SOURCING.md` for the safe remote metadata lookup, archive inspection, selective extraction path, and cache file
 - see `ENTER_PWNED_DFU_ANALYSIS.md` for the current call graph, command preview, interpreter assumptions, and modern-macOS failure points
 - see `PWN_RUNTIME_AUDIT.md` for the full legacy runtime compatibility chain and blocker classification
+- see `ENTER_PWNED_DFU_REMEDIATION_PLAN.md` for the safe modernization triage plan and recommended order of operations
+- see `LEGACY_PWN_RUNTIME_CONTRACT.md` for the declared interpreter/runtime contract for the legacy T8012 chain
+- see `LEGACY_PWN_RUNTIME_SETUP.md` for the smallest host-side setup steps and export guidance
+- see `HOST_BOOTSTRAP.md` for reproducible lab-machine setup and validation flow
 
 ## First Execution-Side Step
 
@@ -78,6 +105,27 @@ Why it is not yet a safe live candidate:
 - the runtime compatibility chain fails before exploit behavior can be meaningfully observed on this host
 - a controlled live attempt would still begin from an execution-side step with no live observability validation yet
 
+Current remediation triage:
+
+- host shim only:
+  - `resources/ipwndfu8012/ipwndfu`
+  - `resources/pwn.py`
+- external dependency packaging issue:
+  - `resources/ipwndfu8012/libusbfinder/__init__.py`
+- low-risk Python 3 port candidate:
+  - `resources/ipwndfu8012/utilities.py`
+- moderate-risk port candidates:
+  - `resources/ipwndfu8012/dfu.py`
+  - `resources/ipwndfu8012/alloc8.py`
+  - `resources/ipwndfu8012/recovery.py`
+- high-risk behavior-sensitive files:
+  - `resources/ipwndfu8012/usbexec.py`
+  - `resources/ipwndfu8012/checkm8.py`
+  - `resources/ipwndfu8012/dfuexec.py`
+  - `resources/ipwndfu8012/limera1n.py`
+  - `resources/ipwndfu8012/SHAtter.py`
+  - `resources/ipwndfu8012/steaks4uce.py`
+
 ## First Safe Live Test Candidate
 
 No safe live test candidate is recommended yet.
@@ -87,6 +135,8 @@ The first candidate should only be reconsidered after:
 - all planned firmware payload sources remain resolved locally
 - `./venv/bin/python odts.py --preflight` reports no unresolved blockers
 - `./venv/bin/python odts.py --preview-enter-pwned-dfu` reports a credible launcher and interpreter contract
+- `./venv/bin/python odts.py --audit-enter-pwned-dfu-runtime` reports no unresolved runtime-compatibility blockers in the chosen scope
+- `./venv/bin/python odts.py --check-legacy-pwn-runtime` reports `preview_clean_runtime_boundary=True`
 - the operator is ready to capture full logs and stop immediately on unexpected behavior
 
 Would a valid local IPSW/extraction clear the current blocker?
@@ -108,6 +158,7 @@ Before any live attempt, capture:
 ./venv/bin/python odts.py -q /path/to/restore.ipsw iBridge2,14 --payload-layout --json
 ./venv/bin/python odts.py --remote-payload-layout iBridge2,14 --board-config j152fap --json
 ./venv/bin/python odts.py --preview-enter-pwned-dfu --json
+./venv/bin/python odts.py --check-legacy-pwn-runtime --json
 ```
 
 If a future controlled live step is attempted, also capture:
@@ -126,6 +177,8 @@ Stop immediately if any of the following occur:
 - `--preflight` stops resolving planned payloads
 - `--preview-enter-pwned-dfu` reports missing interpreter or Python 2 compatibility blockers
 - `--audit-enter-pwned-dfu-runtime` reports unresolved runtime compatibility blockers
+- `--preview-enter-pwned-dfu` or `--audit-enter-pwned-dfu-runtime` reports `Preview-Clean Runtime Boundary: False`
+- `--check-legacy-pwn-runtime` reports unresolved host-side runtime issues
 - selected tool reports loader/runtime failure
 - legacy execution code prompts for interactive retry or blocks unexpectedly
 - observed behavior differs from the declared first-step expectation

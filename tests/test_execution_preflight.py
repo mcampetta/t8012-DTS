@@ -115,12 +115,13 @@ class ExecutionPreflightTests(unittest.TestCase):
         with patch("odtslib.execution_preflight.collect_device_state_report", return_value=_device_report()):
             with patch("odtslib.execution_preflight._tool_report", return_value=fake_tool_report):
                 with patch("odtslib.execution_preflight._touchpoints", return_value=[]):
-                    preflight = build_execution_preflight(manifest, None)
+                    with patch("odtslib.execution_preflight.LOCAL_IPSW_DIR", self.temp_dir / "empty-ipsw"):
+                        preflight = build_execution_preflight(manifest, None)
         self.assertIn("readiness", preflight)
         self.assertEqual(preflight["readiness"]["first_execution_step_name"], "enter-pwned-dfu")
         self.assertEqual(preflight["readiness"]["first_execution_step_classification"], "unverified")
         self.assertEqual(preflight["readiness"]["level"], "ready for planning only")
-        self.assertTrue(preflight["readiness"]["only_blocker_is_missing_payload_material"])
+        self.assertFalse(preflight["readiness"]["only_blocker_is_missing_payload_material"])
         self.assertFalse(preflight["readiness"]["would_valid_local_payloads_enable_live_step_testing"])
 
     def test_preflight_emits_unresolved_payload_analysis(self):
@@ -129,7 +130,8 @@ class ExecutionPreflightTests(unittest.TestCase):
         with patch("odtslib.execution_preflight.collect_device_state_report", return_value=_device_report()):
             with patch("odtslib.execution_preflight._tool_report", return_value=fake_tool_report):
                 with patch("odtslib.execution_preflight._touchpoints", return_value=[]):
-                    preflight = build_execution_preflight(manifest, None)
+                    with patch("odtslib.execution_preflight.LOCAL_IPSW_DIR", self.temp_dir / "empty-ipsw"):
+                        preflight = build_execution_preflight(manifest, None)
         self.assertIn("unresolved_payloads", preflight)
         self.assertTrue(preflight["unresolved_payloads"])
         self.assertEqual(preflight["unresolved_payloads"][0]["root_cause_category"], "missing local files")

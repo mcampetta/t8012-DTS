@@ -26,14 +26,14 @@ Current call path for the T8012 branch:
 The legacy T8012 path would run these commands from the repo root:
 
 ```bash
-/Users/kocrrd/Documents/t8012-DTS/resources/ipwndfu8012/ipwndfu -p
-python /Users/kocrrd/Documents/t8012-DTS/resources/ipwndfu8012/nop_image4.py
+<selected legacy python2 interpreter> /Users/kocrrd/Documents/t8012-DTS/resources/ipwndfu8012/ipwndfu -p
+<selected legacy python2 interpreter> /Users/kocrrd/Documents/t8012-DTS/resources/ipwndfu8012/nop_image4.py
 ```
 
 Notes:
 
-- `ipwndfu` is executed directly through its shebang.
-- `nop_image4.py` is invoked through bare `python` from `resources/pwn.py`.
+- both scripts are now expected to run through the same explicit legacy Python 2 interpreter contract
+- the supported interpreter contract is documented in `LEGACY_PWN_RUNTIME_CONTRACT.md`
 - the reacquire-and-check step is in-process Python code, not a subprocess command.
 
 ## CWD Assumptions

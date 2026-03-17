@@ -3,10 +3,14 @@ from __future__ import annotations
 import json
 import logging
 import re
-import shutil
 from pathlib import Path
 
 from .config import PROJECT_ROOT
+from .legacy_pwn_runtime import (
+    LIBUSBFINDER_INIT,
+    inspect_legacy_python_contract,
+    inspect_libusb_packaging,
+)
 from .subprocess_utils import format_command
 
 LOGGER = logging.getLogger(__name__)
@@ -144,55 +148,42 @@ def _cwd_assumptions() -> list[str]:
 
 def _environment_assumptions() -> list[str]:
     return [
-        "/usr/bin/python exists for the ipwndfu shebang.",
-        "`python` exists on PATH for nop_image4.py launch.",
+        f"{inspect_legacy_python_contract()['env_var']} can be used to supply an explicit legacy Python 2 interpreter.",
+        "If the env override is not set, python2.7/python2 must be discoverable for the declared legacy runtime contract.",
         "PyUSB-compatible `usb` module is importable.",
         "The vendored libusbfinder/libusb flow is compatible with the current macOS release.",
-        "No environment variable override path is implemented in the legacy chain; PATH and shebang resolution are implicit.",
+        "No additional environment-variable override exists for alternate libusb packaging roots.",
     ]
 
 
 def _entry_points() -> list[dict[str, object]]:
+    contract = inspect_legacy_python_contract()
+    selected = contract["selected_interpreter"]
+    interpreter = str(selected["resolved_path"]) if selected else f"<set {contract['env_var']} or install python2>"
     return [
         {
             "name": "exploit_launcher",
             "path": str(IPWNDFU_ENTRY),
-            "command": format_command([IPWNDFU_ENTRY, "-p"]),
+            "command": format_command([interpreter, IPWNDFU_ENTRY, "-p"]),
             "cwd": str(PROJECT_ROOT),
             "shebang": _shebang(IPWNDFU_ENTRY),
         },
         {
             "name": "signature_bypass_helper",
             "path": str(NOP_IMAGE4_ENTRY),
-            "command": format_command(["python", NOP_IMAGE4_ENTRY]),
+            "command": format_command([interpreter, NOP_IMAGE4_ENTRY]),
             "cwd": str(PROJECT_ROOT),
             "shebang": _shebang(NOP_IMAGE4_ENTRY),
         },
     ]
 
 
-def _blockers(modules: list[dict[str, object]], unresolved: list[dict[str, object]]) -> list[dict[str, object]]:
-    blockers: list[dict[str, object]] = []
-    if not Path("/usr/bin/python").exists():
-        blockers.append(
-            {
-                "classification": "interpreter_missing",
-                "subject": str(IPWNDFU_ENTRY),
-                "detail": "ipwndfu shebang requires /usr/bin/python, which is not present on this host.",
-            }
-        )
-    if not shutil.which("python"):
-        blockers.append(
-            {
-                "classification": "path_assumption",
-                "subject": str(NOP_IMAGE4_ENTRY),
-                "detail": "resources/pwn.py launches nop_image4.py via bare `python`, but no python launcher is on PATH.",
-            }
-        )
+def _python2_syntax_dependencies(modules: list[dict[str, object]], unresolved: list[dict[str, object]]) -> list[dict[str, object]]:
+    findings: list[dict[str, object]] = []
     for module in modules:
         markers = module["python2_markers"]
         if markers:
-            blockers.append(
+            findings.append(
                 {
                     "classification": "python2_syntax_dependency",
                     "subject": module["path"],
@@ -200,7 +191,46 @@ def _blockers(modules: list[dict[str, object]], unresolved: list[dict[str, objec
                 }
             )
     for item in unresolved:
-        if item["classification"] != "unknown":
+        if item["classification"] == "python2_syntax_dependency":
+            findings.append(
+                {
+                    "classification": "python2_syntax_dependency",
+                    "subject": item["source"],
+                    "detail": f"Import `{item['import']}` is an unresolved runtime assumption.",
+                }
+            )
+    return findings
+
+
+def _blockers(
+    modules: list[dict[str, object]],
+    unresolved: list[dict[str, object]],
+    *,
+    python_contract: dict[str, object],
+    libusb_packaging: dict[str, object],
+) -> list[dict[str, object]]:
+    blockers: list[dict[str, object]] = []
+    if not python_contract["selected_interpreter"]:
+        blockers.append(
+            {
+                "classification": "interpreter_missing",
+                "subject": str(IPWNDFU_ENTRY),
+                "detail": (
+                    "No explicit legacy Python 2 interpreter is available. "
+                    f"Set {python_contract['env_var']} or install python2.7/python2."
+                ),
+            }
+        )
+    if not libusb_packaging["packaging_ready"]:
+        blockers.append(
+            {
+                "classification": "external_dependency_packaging_issue",
+                "subject": str(LIBUSBFINDER_INIT),
+                "detail": libusb_packaging["issue"],
+            }
+        )
+    for item in unresolved:
+        if item["classification"] in {"path_assumption", "macOS runtime assumption"}:
             blockers.append(
                 {
                     "classification": item["classification"],
@@ -208,14 +238,6 @@ def _blockers(modules: list[dict[str, object]], unresolved: list[dict[str, objec
                     "detail": f"Import `{item['import']}` is an unresolved runtime assumption.",
                 }
             )
-    if any("libusbfinder" in module["path"] for module in modules):
-        blockers.append(
-            {
-                "classification": "macOS runtime assumption",
-                "subject": str(IPWNDFU_ROOT / "libusbfinder/__init__.py"),
-                "detail": "Vendored libusbfinder is hard-coded around old macOS bottle mappings and Python 2-era code paths.",
-            }
-        )
     deduped: list[dict[str, object]] = []
     seen: set[tuple[str, str, str]] = set()
     for blocker in blockers:
@@ -230,26 +252,37 @@ def build_enter_pwned_dfu_runtime_audit() -> dict[str, object]:
     LOGGER.info("Building static runtime audit for enter-pwned-dfu")
     entry_paths = [IPWNDFU_ENTRY, NOP_IMAGE4_ENTRY]
     modules, unresolved = _walk_import_graph(entry_paths)
+    python_contract = inspect_legacy_python_contract()
+    libusb_packaging = inspect_libusb_packaging()
+    syntax_dependencies = _python2_syntax_dependencies(modules, unresolved)
+    runtime_boundary_preview_clean = bool(python_contract["runtime_ready"]) and bool(libusb_packaging["packaging_ready"])
     report = {
         "step": "enter-pwned-dfu",
         "module": str(PWN_MODULE),
         "entry_points": _entry_points(),
         "imported_python_files": modules,
         "unresolved_imports": unresolved,
-        "interpreter_assumptions": {
-            "/usr/bin/python_present": Path("/usr/bin/python").exists(),
-            "python_on_path": shutil.which("python"),
-            "python2_on_path": shutil.which("python2"),
-            "python2_7_on_path": shutil.which("python2.7"),
-        },
+        "interpreter_contract": python_contract,
+        "libusb_packaging": libusb_packaging,
+        "python2_syntax_dependencies": syntax_dependencies,
+        "runtime_boundary_preview_clean": runtime_boundary_preview_clean,
+        "runtime_boundary_reason": (
+            "Explicit legacy Python 2 interpreter is available and libusb packaging assumptions are satisfied."
+            if runtime_boundary_preview_clean
+            else "Legacy interpreter contract or libusb packaging assumptions are still unresolved."
+        ),
         "external_binary_tool_assumptions": [
-            "ipwndfu executes through a shebang-resolved Python interpreter.",
-            "nop_image4.py is launched through PATH-resolved `python`.",
+            "ipwndfu and nop_image4.py should both execute through the same explicit legacy Python 2 interpreter.",
             "The chain depends on PyUSB/libusb rather than modern first-party wrappers.",
         ],
         "cwd_assumptions": _cwd_assumptions(),
         "environment_assumptions": _environment_assumptions(),
-        "blockers": _blockers(modules, unresolved),
+        "blockers": _blockers(
+            modules,
+            unresolved,
+            python_contract=python_contract,
+            libusb_packaging=libusb_packaging,
+        ),
     }
     return report
 
@@ -262,20 +295,38 @@ def render_enter_pwned_dfu_runtime_audit(report: dict[str, object], *, json_outp
         "Enter pwned DFU runtime audit",
         f"Step: {report['step']}",
         f"Module: {report['module']}",
+        f"Preview-Clean Runtime Boundary: {report['runtime_boundary_preview_clean']}",
+        f"Runtime Boundary Reason: {report['runtime_boundary_reason']}",
         "Entry points:",
     ]
     for entry in report["entry_points"]:
         lines.append(f"  - {entry['name']}: {entry['command']}")
         lines.append(f"    cwd={entry['cwd']}")
         lines.append(f"    shebang={entry['shebang'] or 'none'}")
-    lines.append("Interpreter assumptions:")
-    for key, value in report["interpreter_assumptions"].items():
-        lines.append(f"  - {key}={value or 'missing'}")
+    lines.append("Interpreter contract:")
+    contract = report["interpreter_contract"]
+    lines.append(f"  - env_var={contract['env_var']}")
+    selected = contract["selected_interpreter"]
+    lines.append(f"  - selected_interpreter={selected['resolved_path'] if selected else 'none'}")
+    lines.append(f"  - runtime_ready={contract['runtime_ready']}")
+    lines.append(f"  - supported_on_modern_macos={contract['supported_on_modern_macos']}")
+    lines.append("Dependency packaging:")
+    packaging = report["libusb_packaging"]
+    lines.append(f"  - host_macos_version={packaging['host_macos_version']}")
+    lines.append(f"  - host_supported_by_vendored_libusbfinder={packaging['host_supported_by_vendored_libusbfinder']}")
+    lines.append(f"  - pyusb_available={packaging['pyusb_available']}")
+    lines.append(f"  - pyusb_libusb_backend_available={packaging['pyusb_libusb_backend_available']}")
+    lines.append(f"  - packaging_ready={packaging['packaging_ready']}")
+    if packaging.get("issue"):
+        lines.append(f"  - issue={packaging['issue']}")
     lines.append("Imported Python files:")
     for module in report["imported_python_files"]:
         lines.append(
             f"  - {module['path']}: shebang={module['shebang'] or 'none'} python2_markers={module['python2_markers'] or ['none']}"
         )
+    lines.append("Python 2 syntax dependencies:")
+    for finding in report["python2_syntax_dependencies"]:
+        lines.append(f"  - subject={finding['subject']} detail={finding['detail']}")
     if report["unresolved_imports"]:
         lines.append("Unresolved imports:")
         for item in report["unresolved_imports"]:

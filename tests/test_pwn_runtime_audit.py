@@ -10,7 +10,8 @@ class EnterPwnedDFURuntimeAuditTests(unittest.TestCase):
         self.assertEqual(len(report["entry_points"]), 2)
         blocker_classes = {item["classification"] for item in report["blockers"]}
         self.assertIn("interpreter_missing", blocker_classes)
-        self.assertIn("python2_syntax_dependency", blocker_classes)
+        self.assertIn("external_dependency_packaging_issue", blocker_classes)
+        self.assertTrue(report["python2_syntax_dependencies"])
 
     def test_runtime_audit_includes_key_imported_files(self):
         report = build_enter_pwned_dfu_runtime_audit()

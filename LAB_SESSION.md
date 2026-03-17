@@ -1,5 +1,64 @@
 # LAB SESSION
 
+## 2026-03-17 Host Bootstrap / Runtime Readiness
+
+### Scope
+
+- make lab-machine setup reproducible for additional internal hosts
+- keep all work host-only and non-destructive
+- clean up legacy runtime check semantics so summary labels match detailed fields
+
+### Changes Applied
+
+- added `scripts/bootstrap_lab_mac.sh`
+- added `HOST_BOOTSTRAP.md`
+- updated `odtslib/legacy_pwn_runtime.py` so fallback interpreter discovery is always recorded even when `ODTS_LEGACY_PYTHON` is set
+- updated runtime-check text output to group readiness fields under a clear summary section
+
+### Bootstrap Workflow
+
+The new bootstrap script now:
+
+- verifies macOS and architecture
+- verifies or installs Homebrew
+- verifies or installs required brew packages:
+  - `pyenv`
+  - `libusb`
+  - `libirecovery`
+  - `openssl@1.1`
+  - `readline`
+  - `xz`
+  - `pkg-config`
+- verifies or installs Python `2.7.18` via `pyenv`
+- persists `ODTS_LEGACY_PYTHON` to `.odts-legacy-python.env`
+- creates or updates the Python 3 `venv`
+- installs Python 3 repo requirements
+- installs Python 2-side `pyusb==1.0.2`
+- runs:
+  - `./venv/bin/python odts.py --check-legacy-pwn-runtime --json`
+  - `./venv/bin/python odts.py --preflight --board-config j152fap --json`
+
+### Current Runtime Readiness Model
+
+Verified state from the selected Python `2.7.18` runtime:
+
+- `interpreter_ready=true`
+- `module_import_ready=false`
+- `libusb_backend_ready=false`
+- `vendored_libusbfinder_ready=false`
+
+Current concrete blockers:
+
+- `missing_pyusb`
+- `missing_libusb`
+- `libusbfinder_packaging_issue`
+
+### Notes
+
+- `Python 2.7 available` no longer depends on downstream import success
+- fallback discovery results are now preserved even when `ODTS_LEGACY_PYTHON` is set explicitly
+- the remaining host-side boundary is now isolated as Python 2 package/backend readiness plus vendored `libusbfinder` packaging, not interpreter absence
+
 ## 2026-03-17 10:20:56 CDT
 
 ### Scope
@@ -669,3 +728,147 @@ cat IPSW/.odts-remote-payload-cache.json
 - whether USB re-enumeration timing matches the legacy sleep-and-reacquire assumption
 - whether `nop_image4.py` succeeds after a real pwned DFU transition
 - whether later live execution-side boot/send steps behave as planned
+
+## 2026-03-17 Enter Pwned DFU Remediation Triage
+
+### Scope
+
+- Convert the runtime audit into a safe modernization triage plan
+- Identify the smallest change slice that could move the chain from runtime-blocked to preview-clean
+- Avoid broad rewrites and avoid any live execution changes
+
+### Changes Applied
+
+- Added `ENTER_PWNED_DFU_REMEDIATION_PLAN.md`
+- Updated `LIVE_READINESS.md`
+
+### Current Triage Result
+
+- host shim only:
+  - `resources/ipwndfu8012/ipwndfu`
+  - `resources/pwn.py`
+- low-risk Python 3 port candidate:
+  - `resources/ipwndfu8012/utilities.py`
+- moderate-risk port candidates:
+  - `resources/ipwndfu8012/dfu.py`
+  - `resources/ipwndfu8012/alloc8.py`
+  - `resources/ipwndfu8012/recovery.py`
+- high-risk behavior-sensitive files:
+  - `resources/ipwndfu8012/usbexec.py`
+  - `resources/ipwndfu8012/checkm8.py`
+  - `resources/ipwndfu8012/dfuexec.py`
+  - `resources/ipwndfu8012/limera1n.py`
+  - `resources/ipwndfu8012/SHAtter.py`
+  - `resources/ipwndfu8012/steaks4uce.py`
+- external dependency packaging issue:
+  - `resources/ipwndfu8012/libusbfinder/__init__.py`
+
+### Recommended Order Of Operations
+
+1. define the interpreter contract explicitly
+2. remove implicit `/usr/bin/python` and bare `python` launcher assumptions
+3. separate libusb packaging from exploit behavior
+4. only then consider a tightly scoped transitive compatibility pass
+5. re-run preview and runtime audit before any live-step discussion
+
+### Current Working State
+
+- the active blocker remains runtime compatibility
+- the next engineering step is a narrow runtime-contract decision, not exploit restoration
+- even after runtime remediation, device behavior would still remain unverified
+
+## 2026-03-17 Legacy Runtime Contract Cleanup
+
+### Scope
+
+- implement the smallest safe host-shim/runtime-contract cleanup
+- remove implicit interpreter assumptions
+- keep high-risk legacy behavior files untouched
+
+### Changes Applied
+
+- Added `odtslib/legacy_pwn_runtime.py`
+- Added `LEGACY_PWN_RUNTIME_CONTRACT.md`
+- Updated `resources/pwn.py` so the T8012 path uses an explicit legacy interpreter launcher
+- Updated `resources/ipwndfu8012/ipwndfu` shebang from `/usr/bin/python` to `/usr/bin/env python2`
+- Updated preview and runtime-audit output to report:
+  - selected interpreter
+  - libusb packaging status
+  - `Preview-Clean Runtime Boundary`
+
+### Commands Run
+
+```bash
+./venv/bin/python odts.py --preview-enter-pwned-dfu
+./venv/bin/python odts.py --audit-enter-pwned-dfu-runtime
+./venv/bin/python -m unittest tests.test_pwn_preview tests.test_pwn_runtime_audit tests.test_remote_ipsw tests.test_payload_layout tests.test_execution_preflight tests.test_tool_wrappers tests.test_device_state tests.test_firmware_pipeline
+```
+
+### Observed Outputs
+
+- Preview now reports explicit launch placeholders instead of implicit `/usr/bin/python` or bare `python`
+- Current interpreter contract:
+  - env var: `ODTS_LEGACY_PYTHON`
+  - fallback discovery: `python2.7`, `python2`
+  - current selected interpreter: none
+- Current dependency packaging result:
+  - `pyusb_available=True`
+  - `pyusb_libusb_backend_available=True`
+  - `host_supported_by_vendored_libusbfinder=False`
+- Current runtime boundary result:
+  - `Preview-Clean Runtime Boundary: False`
+
+### Current Working State
+
+- implicit interpreter assumptions have been removed from the ODTS T8012 launch path
+- the active blocker is now explicit:
+  - no selected legacy Python 2 interpreter
+  - unresolved vendored libusb packaging assumptions on this host
+- high-risk Python 2 behavior files remain untouched
+
+## 2026-03-17 Legacy Runtime Host Check
+
+### Scope
+
+- add a host-only runtime check command for the declared legacy T8012 contract
+- report exact interpreter, import, and libusb packaging state
+- provide an explicit export hint for operators
+
+### Changes Applied
+
+- added `--check-legacy-pwn-runtime`
+- added `LEGACY_PWN_RUNTIME_SETUP.md`
+- updated `LEGACY_PWN_RUNTIME_CONTRACT.md`
+- updated `LIVE_READINESS.md`
+
+### Commands Run
+
+```bash
+./venv/bin/python odts.py --check-legacy-pwn-runtime
+./venv/bin/python odts.py --check-legacy-pwn-runtime --json
+./venv/bin/python -m unittest tests.test_legacy_pwn_runtime tests.test_pwn_preview tests.test_pwn_runtime_audit
+```
+
+### Observed Outputs
+
+- current host-side result:
+  - `Preview-Clean Runtime Boundary: False`
+  - `missing_python2`
+  - `libusbfinder_packaging_issue`
+- runtime status fields now reported separately:
+  - `interpreter_ready`
+  - `module_import_ready`
+  - `libusb_backend_ready`
+  - `vendored_libusbfinder_ready`
+  - `preview_clean_runtime_boundary`
+- current import checks:
+  - `usb=True`
+  - `usb.backend.libusb1=True`
+- current export hint:
+  - `export ODTS_LEGACY_PYTHON=/absolute/path/to/python2.7`
+
+### Current Working State
+
+- the runtime boundary is now explicit and host-checkable
+- the next host-only step is to provide an explicit Python 2.7 interpreter path
+- even after that, vendored libusbfinder packaging may still remain the active unresolved host-side issue

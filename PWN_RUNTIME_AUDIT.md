@@ -56,8 +56,9 @@ Current chain assumptions:
 
 Current host result:
 
-- `/usr/bin/python`: missing
-- `python` on PATH: missing
+- declared env override: `ODTS_LEGACY_PYTHON`
+- `/usr/bin/python`: no longer part of the supported contract
+- `python`: no longer part of the supported contract
 - `python2` on PATH: missing
 - `python2.7` on PATH: missing
 
@@ -143,13 +144,10 @@ Current blocker chain from the static audit:
 
 ### interpreter_missing
 
-- `resources/ipwndfu8012/ipwndfu`
-  - shebang requires missing `/usr/bin/python`
-
-### path_assumption
-
-- `resources/pwn.py` launches `nop_image4.py` with bare `python`
-  - no `python` launcher exists on this host
+- no explicit legacy Python 2 interpreter is currently selected
+- supported contract is now:
+  - `ODTS_LEGACY_PYTHON`
+  - or discovered `python2.7` / `python2`
 
 ### python2_syntax_dependency
 
@@ -163,7 +161,7 @@ Current blocker chain from the static audit:
   - `libusbfinder/__init__.py`
   - multiple exploit helper modules
 
-### macOS runtime assumption
+### external_dependency_packaging_issue
 
 - `resources/ipwndfu8012/libusbfinder/__init__.py`
   - hard-coded around older macOS bottle mappings and Python 2-era code paths

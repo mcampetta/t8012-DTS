@@ -26,6 +26,7 @@ from odtslib.execution_preflight import (
     render_execution_graph,
     render_execution_preflight,
 )
+from odtslib.legacy_pwn_runtime import build_legacy_pwn_runtime_check, render_legacy_pwn_runtime_check
 from odtslib.payload_layout import inspect_payload_layout, render_payload_layout
 from odtslib.pwn_preview import build_enter_pwned_dfu_preview, render_enter_pwned_dfu_preview
 from odtslib.pwn_runtime_audit import (
@@ -89,6 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--remote-payload-layout", metavar="DEVICE", help="Inspect or prepare planned payloads directly from a remote restore IPSW without full local download")
     parser.add_argument("--preview-enter-pwned-dfu", action="store_true", help="Preview the first execution-side step with file, interpreter, and launcher diagnostics only")
     parser.add_argument("--audit-enter-pwned-dfu-runtime", action="store_true", help="Statically audit the full legacy runtime compatibility chain for enter-pwned-dfu without execution")
+    parser.add_argument("--check-legacy-pwn-runtime", action="store_true", help="Check the host-side legacy T8012 Python/libusb runtime contract without execution")
     parser.add_argument("--extract-planned-payloads", action="store_true", help="With --payload-layout or --remote-payload-layout, extract only the planned payload files into a safe local directory")
     parser.add_argument("--payload-root", help="Optional destination root for planned payload layout inspection or extraction")
     parser.add_argument("--build", help="Optional build override for remote payload layout lookup, for example 19P647")
@@ -327,6 +329,13 @@ def run_audit_enter_pwned_dfu_runtime(args: argparse.Namespace, logger) -> int:
     return 0
 
 
+def run_check_legacy_pwn_runtime(args: argparse.Namespace, logger) -> int:
+    logger.info("Checking legacy pwn runtime contract without execution")
+    report = build_legacy_pwn_runtime_check()
+    print(render_legacy_pwn_runtime_check(report, json_output=args.json))
+    return 0
+
+
 def run_local_ipsw_flow(args: argparse.Namespace, logger) -> int:
     from resources import img4, pwn
 
@@ -464,6 +473,8 @@ def main() -> int:
             return run_preview_enter_pwned_dfu(args, logger)
         if args.audit_enter_pwned_dfu_runtime:
             return run_audit_enter_pwned_dfu_runtime(args, logger)
+        if args.check_legacy_pwn_runtime:
+            return run_check_legacy_pwn_runtime(args, logger)
         if args.remote_payload_layout:
             return run_remote_payload_layout(args, logger)
         if args.payload_layout:

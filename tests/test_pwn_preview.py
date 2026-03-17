@@ -21,7 +21,8 @@ class EnterPwnedDFUPreviewTests(unittest.TestCase):
         nop_image4 = assumptions[1]
         self.assertTrue(ipwndfu["requires_python2_runtime"])
         self.assertIn("python2_print_statement", ipwndfu["python2_markers"])
-        self.assertFalse(nop_image4["python_launcher"]["present"])
+        self.assertIsNone(ipwndfu["runtime_contract"]["selected_interpreter"])
+        self.assertFalse(report["runtime_boundary_preview_clean"])
         self.assertTrue(nop_image4["effective_runtime_requires_python2"])
 
 
