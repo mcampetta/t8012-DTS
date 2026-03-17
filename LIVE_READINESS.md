@@ -11,10 +11,13 @@ Rationale:
 - required patch/sign/query tools are currently runnable
 - planned firmware payload sources now resolve from the canonical local `IPSW/` layout
 - local and remote payload sourcing helpers are both available for repeatable preparation
+- current payload build remains `19P647`
+- current normalized SHSH blob was acquired using signed build `23P3120`
+- SHSH acquisition used automatic fallback from repo-aligned `19P647` to latest signed `23P3120`
+- host-side artifact compatibility succeeded for the current `19P647` payload plan with `host_side_mismatch_rejected=false`
 - the current T2 path is hybrid by design:
   - pwned-DFU / `nop_image4.py` is used to relax Image4 handling
   - SHSH-backed IMG4 signing is still used for most of the boot chain
-- signing material is still missing at `resources/shsh.shsh`
 - the first execution-side step still routes through legacy and unverified code
 
 ## Current Blockers
@@ -23,16 +26,28 @@ There are no remaining payload-resolution blockers in the current preflight resu
 
 The remaining blockers are now split across two different readiness layers:
 
-- signing-material readiness:
-  - `resources/shsh.shsh` is not present
-  - SHSH is still functionally required in the current implementation overall
-  - safe operator action now exists:
-    - `./venv/bin/python odts.py --acquire-shsh`
-  - inability to obtain a valid blob for `iBridge2,14` / `19P647` is a real architecture blocker, not just a missing-file problem
 - runtime readiness:
   - legacy pwn/runtime boundary still not preview-clean
 - execution readiness:
   - still blocked because the current pipeline depends on both the SHSH-backed signing path and the unverified pwned-DFU/Image4-bypass path
+
+Current readiness dimensions:
+
+- payload readiness:
+  - ready
+  - payload build: `19P647`
+- signing-material readiness:
+  - ready
+  - `resources/shsh.shsh` is present
+  - SHSH build used: `23P3120`
+  - fallback to latest signed used: `true`
+  - host-side artifact compatibility succeeded: `true`
+- runtime readiness:
+  - not ready
+  - `enter-pwned-dfu` runtime boundary remains legacy and unverified
+- execution readiness:
+  - not ready
+  - first live step still requires a controlled execution-side validation decision
 
 Execution-side uncertainty remains:
 
@@ -158,6 +173,10 @@ The first candidate should only be reconsidered after:
 - `./venv/bin/python odts.py --audit-enter-pwned-dfu-runtime` reports no unresolved runtime-compatibility blockers in the chosen scope
 - `./venv/bin/python odts.py --check-legacy-pwn-runtime` reports `preview_clean_runtime_boundary=True`
 - the operator is ready to capture full logs and stop immediately on unexpected behavior
+
+The current first controlled live-step plan is documented in:
+
+- `FIRST_LIVE_STEP_PLAN.md`
 
 Would a valid local IPSW/extraction clear the current blocker?
 

@@ -1107,3 +1107,44 @@ cat IPSW/.odts-remote-payload-cache.json
 - default SHSH acquisition is now compatibility-first with automatic signed-build fallback
 - the report clearly records both the attempted repo-aligned build and the final build used
 - current normalized signing material for this lab device was acquired from signed build `23P3120`
+
+## 2026-03-17: First Live-Step Planning
+
+### Goal
+
+- make operator-facing readiness output show payload build, SHSH build used, fallback status, and host-side artifact compatibility
+- document the first controlled `enter-pwned-dfu` step without executing it
+
+### Changes Applied
+
+- updated `odtslib/execution_preflight.py`
+- updated `odts.py`
+- added `resources/shsh.metadata.json` sidecar support through `odtslib/shsh_material.py`
+- added `FIRST_LIVE_STEP_PLAN.md`
+- updated `LIVE_READINESS.md`
+- updated `OPERATOR_WORKFLOW.md`
+
+### Commands Run
+
+```bash
+./venv/bin/python -m unittest tests.test_shsh_material tests.test_execution_preflight tests.test_prepare_device
+./venv/bin/python odts.py --acquire-shsh --json
+./venv/bin/python odts.py --preflight
+./venv/bin/python odts.py --prepare-device
+```
+
+### Observed Outputs
+
+- `--preflight` now reports:
+  - payload build `19P647`
+  - SHSH build used `23P3120`
+  - SHSH fallback to latest signed used `True`
+  - host-side artifact compatibility succeeded `True`
+- `--prepare-device` now surfaces the same readiness-signing summary
+- first live-step procedure documented, but not executed
+
+### Current Working State
+
+- planning, payload sourcing, and SHSH acquisition are now operator-visible as separate readiness layers
+- the next boundary remains the first controlled `enter-pwned-dfu` live-step attempt
+- no live execution was performed in this pass

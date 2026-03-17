@@ -5,7 +5,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from .config import PROJECT_ROOT, SHSH_PATH
+from .config import PROJECT_ROOT, SHSH_METADATA_PATH, SHSH_PATH
 from .device_state import collect_device_state_report
 from .exceptions import ODTSError
 from .firmware_pipeline import build_artifact_plan, load_manifest_for_planning
@@ -143,6 +143,44 @@ def _host_side_compatibility_probe(*, shsh_path: Path, board_config: str) -> dic
         }
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def _write_shsh_metadata(
+    *,
+    product: str,
+    board_config: str,
+    ecid: str,
+    selected_build: str,
+    selected_version: str,
+    build_source: str,
+    requested_latest_signed: bool,
+    used_latest_signed: bool,
+    fallback_used: bool,
+    acquisition_strategy: str,
+    used_build: str,
+    generated_ticket_path: str | None,
+    write_status: str,
+    host_compatibility: dict[str, object] | None,
+) -> None:
+    SHSH_METADATA_PATH.parent.mkdir(parents=True, exist_ok=True)
+    metadata = {
+        "product": product,
+        "board_config": board_config,
+        "ecid": ecid,
+        "selected_build": selected_build,
+        "selected_version": selected_version,
+        "build_source": build_source,
+        "requested_latest_signed": requested_latest_signed,
+        "used_latest_signed": used_latest_signed,
+        "fallback_used": fallback_used,
+        "acquisition_strategy": acquisition_strategy,
+        "used_build": used_build,
+        "generated_ticket_path": generated_ticket_path,
+        "output_path": str(SHSH_PATH),
+        "write_status": write_status,
+        "host_compatibility": host_compatibility,
+    }
+    SHSH_METADATA_PATH.write_text(json.dumps(metadata, indent=2, sort_keys=True), encoding="utf-8")
 
 
 def _acquire_shsh_with_context(
@@ -314,6 +352,23 @@ def acquire_shsh_for_connected_device(*, build: str | None = None, latest_signed
             else "repo-aligned first"
         )
         primary_report["used_build"] = primary_report["selected_build"]
+        if primary_report.get("acquired"):
+            _write_shsh_metadata(
+                product=product,
+                board_config=model,
+                ecid=ecid,
+                selected_build=str(primary_report["selected_build"]),
+                selected_version=str(primary_report["selected_version"]),
+                build_source=str(primary_report["build_source"]),
+                requested_latest_signed=bool(primary_report.get("requested_latest_signed")),
+                used_latest_signed=bool(primary_report.get("used_latest_signed")),
+                fallback_used=False,
+                acquisition_strategy=str(primary_report["acquisition_strategy"]),
+                used_build=str(primary_report["used_build"]),
+                generated_ticket_path=primary_report.get("generated_ticket_path"),
+                write_status=str(primary_report["write_status"]),
+                host_compatibility=primary_report.get("host_compatibility"),
+            )
         return primary_report
 
     fallback_context = _latest_signed_build_context(product)
@@ -346,6 +401,23 @@ def acquire_shsh_for_connected_device(*, build: str | None = None, latest_signed
     fallback_report["fallback_used"] = True
     fallback_report["acquisition_strategy"] = "repo-aligned then latest signed"
     fallback_report["used_build"] = fallback_report["selected_build"]
+    if fallback_report.get("acquired"):
+        _write_shsh_metadata(
+            product=product,
+            board_config=model,
+            ecid=ecid,
+            selected_build=str(fallback_report["selected_build"]),
+            selected_version=str(fallback_report["selected_version"]),
+            build_source=str(fallback_report["build_source"]),
+            requested_latest_signed=bool(fallback_report.get("requested_latest_signed")),
+            used_latest_signed=bool(fallback_report.get("used_latest_signed")),
+            fallback_used=True,
+            acquisition_strategy=str(fallback_report["acquisition_strategy"]),
+            used_build=str(fallback_report["used_build"]),
+            generated_ticket_path=fallback_report.get("generated_ticket_path"),
+            write_status=str(fallback_report["write_status"]),
+            host_compatibility=fallback_report.get("host_compatibility"),
+        )
     return fallback_report
 
 

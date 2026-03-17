@@ -276,7 +276,7 @@ def _render_prepare_device(report: dict[str, object], *, json_output: bool) -> s
         f"Device state: {report['device_state']}",
         f"Product: {report['product'] or 'unknown'}",
         f"Board config: {report['board_config'] or 'unknown'}",
-        f"Selected build: {report['selected_build'] or 'unknown'}",
+        f"Payload build: {report['selected_build'] or 'unknown'}",
         f"Build source: {report['build_source'] or 'unknown'}",
         f"Payload source used: {report['payload_source_used']}",
     ]
@@ -288,6 +288,15 @@ def _render_prepare_device(report: dict[str, object], *, json_output: bool) -> s
         lines.append(f"Preflight result: {report['preflight_result']}")
     if report.get("readiness_level"):
         lines.append(f"Current readiness level: {report['readiness_level']}")
+    if report.get("shsh_build_used"):
+        lines.append(f"SHSH build used: {report['shsh_build_used']}")
+    if report.get("shsh_fallback_used") is not None:
+        lines.append(f"SHSH fallback to latest signed used: {report['shsh_fallback_used']}")
+    if report.get("host_side_artifact_compatibility_succeeded") is not None:
+        lines.append(
+            "Host-side artifact compatibility succeeded: "
+            f"{report['host_side_artifact_compatibility_succeeded']}"
+        )
     if report.get("next_recommended_command"):
         lines.append(f"Next recommended command: {report['next_recommended_command']}")
     if report.get("notes"):
@@ -323,6 +332,9 @@ def run_prepare_device(args: argparse.Namespace, logger) -> int:
         "payload_extraction_result": None,
         "preflight_result": None,
         "readiness_level": None,
+        "shsh_build_used": None,
+        "shsh_fallback_used": None,
+        "host_side_artifact_compatibility_succeeded": None,
         "next_recommended_command": None,
         "device_report": asdict(device_report),
         "payload_report": None,
@@ -387,6 +399,11 @@ def run_prepare_device(args: argparse.Namespace, logger) -> int:
     report["preflight"] = preflight
     report["preflight_result"] = "no blockers" if not preflight["blockers"] else f"{len(preflight['blockers'])} blocker(s)"
     report["readiness_level"] = preflight["readiness"]["level"]
+    report["shsh_build_used"] = preflight["readiness"].get("shsh_build_used")
+    report["shsh_fallback_used"] = preflight["readiness"].get("shsh_fallback_used")
+    report["host_side_artifact_compatibility_succeeded"] = preflight["readiness"].get(
+        "host_side_artifact_compatibility_succeeded"
+    )
     if any("signing material missing" in blocker for blocker in preflight["blockers"]):
         report["next_recommended_command"] = "./venv/bin/python odts.py --acquire-shsh"
     elif not preflight["blockers"]:

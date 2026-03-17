@@ -73,11 +73,15 @@ The command reports:
 - current device state
 - product
 - board config
-- selected build
+- payload build
+- SHSH build used, when available from `resources/shsh.metadata.json`
+- whether SHSH acquisition fell back to latest signed
+- whether host-side artifact compatibility succeeded
 - payload source used
 - extraction result
 - preflight result
 - current readiness level
+- next recommended command
 - next recommended command
 
 ## Next Steps
@@ -98,6 +102,22 @@ After successful SHSH acquisition:
 
 ```bash
 ./venv/bin/python odts.py --preflight
+```
+
+Current expected readiness shape on this lab target is:
+
+- payload build: `19P647`
+- SHSH build used: `23P3120`
+- SHSH fallback to latest signed used: `true`
+- host-side artifact compatibility succeeded: `true`
+- readiness level: `ready for planning only`
+
+That is enough to prepare for the first controlled `enter-pwned-dfu` live-step test plan, but it is not approval to execute it.
+
+The planned first live-step procedure is documented in:
+
+```bash
+FIRST_LIVE_STEP_PLAN.md
 ```
 
 If you already have a previously acquired valid blob for the same connected device and the same selected build, placing it at `resources/shsh.shsh` also satisfies the current signing-material requirement.

@@ -4,7 +4,7 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from .config import LOCAL_IPSW_DIR, PROJECT_ROOT, RESOURCES_DIR, SHSH_PATH
+from .config import LOCAL_IPSW_DIR, PROJECT_ROOT, RESOURCES_DIR, SHSH_METADATA_PATH, SHSH_PATH
 from .device import read_board_config
 from .device_state import DeviceStateName, collect_device_state_report
 from .exceptions import ODTSError
@@ -49,6 +49,10 @@ class ReadinessSummary:
     signing_material_ready: bool
     payload_material_ready: bool
     signing_status_availability: str
+    payload_build: str | None
+    shsh_build_used: str | None
+    shsh_fallback_used: bool
+    host_side_artifact_compatibility_succeeded: bool | None
     operator_action_needed: str
     would_valid_local_payloads_enable_live_step_testing: bool
     first_execution_step_name: str
@@ -337,6 +341,15 @@ def _touchpoints() -> list[dict[str, object]]:
     return reports
 
 
+def _load_shsh_metadata() -> dict[str, object] | None:
+    if not SHSH_METADATA_PATH.exists():
+        return None
+    try:
+        return json.loads(SHSH_METADATA_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
 def _resolve_board_config(explicit_board_config: str | None) -> tuple[str, dict[str, object] | None]:
     if explicit_board_config:
         return explicit_board_config, None
@@ -453,12 +466,15 @@ def build_execution_preflight(manifest: FirmwareManifest, board_config: str | No
             blockers.append(f"legacy module missing: {touchpoint['path']}")
 
     unresolved_payloads = _unresolved_payloads(source_checks)
+    shsh_metadata = _load_shsh_metadata()
 
     readiness = _readiness_summary(
         blockers=blockers,
         graph=graph,
         tool_reports=tool_reports,
         touchpoints=touchpoints,
+        manifest=manifest,
+        shsh_metadata=shsh_metadata,
     )
 
     return {
@@ -468,6 +484,7 @@ def build_execution_preflight(manifest: FirmwareManifest, board_config: str | No
         "static_resources": static_resources,
         "legacy_touchpoints": touchpoints,
         "unresolved_payloads": unresolved_payloads,
+        "shsh_material": shsh_metadata,
         "blockers": blockers,
         "ready_for_live_execution": not blockers,
         "readiness": asdict(readiness),
@@ -480,6 +497,8 @@ def _readiness_summary(
     graph: dict[str, object],
     tool_reports: list[dict[str, object]],
     touchpoints: list[dict[str, object]],
+    manifest: FirmwareManifest,
+    shsh_metadata: dict[str, object] | None,
 ) -> ReadinessSummary:
     first_step = graph["global_steps"][0]
     first_step_name = first_step["name"]
@@ -508,6 +527,15 @@ def _readiness_summary(
         if signing_material_ready
         else "unknown or unavailable for selected device/build until SHSH acquisition succeeds"
     )
+    host_compatibility = None
+    if shsh_metadata:
+        host_compatibility = shsh_metadata.get("host_compatibility")
+    host_side_artifact_compatibility_succeeded = None
+    if isinstance(host_compatibility, dict):
+        host_side_artifact_compatibility_succeeded = (
+            bool(host_compatibility.get("im4m_generation_succeeded"))
+            and not bool(host_compatibility.get("host_side_mismatch_rejected"))
+        )
 
     if any("tool not runnable" in blocker for blocker in blockers) or any("legacy module missing" in blocker for blocker in blockers):
         level = "not ready for live testing"
@@ -542,6 +570,10 @@ def _readiness_summary(
         signing_material_ready=signing_material_ready,
         payload_material_ready=payload_material_ready,
         signing_status_availability=signing_status_availability,
+        payload_build=manifest.product_build_version,
+        shsh_build_used=(str(shsh_metadata.get("used_build")) if shsh_metadata and shsh_metadata.get("used_build") else None),
+        shsh_fallback_used=bool(shsh_metadata.get("fallback_used")) if shsh_metadata else False,
+        host_side_artifact_compatibility_succeeded=host_side_artifact_compatibility_succeeded,
         operator_action_needed=operator_action_needed,
         would_valid_local_payloads_enable_live_step_testing=payloads_enable_live_testing,
         first_execution_step_name=first_step_name,
@@ -597,9 +629,16 @@ def render_execution_preflight(preflight: dict[str, object], *, json_output: boo
         f"Readiness level: {preflight['readiness']['level']}",
         f"Readiness rationale: {preflight['readiness']['rationale']}",
         f"Execution model: {preflight['readiness']['execution_model']}",
+        f"Payload build: {preflight['readiness']['payload_build'] or 'unknown'}",
         f"Payload material ready: {preflight['readiness']['payload_material_ready']}",
         f"Signing material ready: {preflight['readiness']['signing_material_ready']}",
         f"Signing-status availability: {preflight['readiness']['signing_status_availability']}",
+        f"SHSH build used: {preflight['readiness']['shsh_build_used'] or 'unknown'}",
+        f"SHSH fallback to latest signed used: {preflight['readiness']['shsh_fallback_used']}",
+        (
+            "Host-side artifact compatibility succeeded: "
+            f"{preflight['readiness']['host_side_artifact_compatibility_succeeded']}"
+        ),
         f"Only blocker is missing payload material: {preflight['readiness']['only_blocker_is_missing_payload_material']}",
         f"Operator action needed: {preflight['readiness']['operator_action_needed']}",
         f"Would valid local payloads enable live step testing: {preflight['readiness']['would_valid_local_payloads_enable_live_step_testing']}",
@@ -648,6 +687,22 @@ def render_execution_preflight(preflight: dict[str, object], *, json_output: boo
     lines.append("Blockers:")
     for blocker in preflight["blockers"] or ["none"]:
         lines.append(f"  - {blocker}")
+    lines.append("SHSH material:")
+    if preflight.get("shsh_material"):
+        shsh = preflight["shsh_material"]
+        lines.append(f"  - used_build={shsh.get('used_build') or shsh.get('selected_build')}")
+        lines.append(f"  - build_source={shsh.get('build_source')}")
+        lines.append(f"  - fallback_used={shsh.get('fallback_used')}")
+        lines.append(f"  - requested_latest_signed={shsh.get('requested_latest_signed')}")
+        lines.append(f"  - used_latest_signed={shsh.get('used_latest_signed')}")
+        host_compatibility = shsh.get("host_compatibility") or {}
+        if host_compatibility:
+            lines.append(
+                "  - host_side_artifact_compatibility="
+                f"{not bool(host_compatibility.get('host_side_mismatch_rejected')) and bool(host_compatibility.get('im4m_generation_succeeded'))}"
+            )
+    else:
+        lines.append("  - none")
     lines.append("Stop conditions:")
     for condition in preflight["readiness"]["stop_conditions"]:
         lines.append(f"  - {condition}")

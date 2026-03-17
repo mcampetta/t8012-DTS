@@ -1,6 +1,7 @@
 import shutil
 import tempfile
 import unittest
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -111,6 +112,7 @@ class SHSHMaterialTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = Path(tempfile.mkdtemp(prefix="odts-shsh-test-"))
         self.output_path = self.temp_dir / "resources" / "shsh.shsh"
+        self.metadata_path = self.temp_dir / "resources" / "shsh.metadata.json"
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
 
     def tearDown(self):
@@ -121,14 +123,18 @@ class SHSHMaterialTests(unittest.TestCase):
             with patch("odtslib.shsh_material._build_context", return_value={"build": "19P647", "version": "6.1", "source": "repo-aligned default manifest", "manifest_path": None}):
                 with patch("odtslib.shsh_material.ToolRegistry", return_value=_FakeRegistry(b"ticket-data")):
                     with patch("odtslib.shsh_material.SHSH_PATH", self.output_path):
-                        with patch("odtslib.shsh_material._host_side_compatibility_probe", return_value={"manifest_build": "19P647", "im4m_generation_succeeded": True, "available_artifacts_wrapped_successfully": 2, "available_artifacts_rejected": 0, "host_side_mismatch_rejected": False}):
-                            report = acquire_shsh_for_connected_device()
+                        with patch("odtslib.shsh_material.SHSH_METADATA_PATH", self.metadata_path):
+                            with patch("odtslib.shsh_material._host_side_compatibility_probe", return_value={"manifest_build": "19P647", "im4m_generation_succeeded": True, "available_artifacts_wrapped_successfully": 2, "available_artifacts_rejected": 0, "host_side_mismatch_rejected": False}):
+                                report = acquire_shsh_for_connected_device()
         self.assertTrue(self.output_path.exists())
         self.assertEqual(self.output_path.read_bytes(), b"ticket-data")
         self.assertEqual(report["write_status"], "newly_created")
         self.assertEqual(report["selected_build"], "19P647")
         self.assertEqual(report["build_source"], "repo-aligned default manifest")
         self.assertFalse(report["host_compatibility"]["host_side_mismatch_rejected"])
+        metadata = json.loads(self.metadata_path.read_text(encoding="utf-8"))
+        self.assertEqual(metadata["used_build"], "19P647")
+        self.assertFalse(metadata["fallback_used"])
 
     def test_acquire_shsh_reuses_existing_when_bytes_match(self):
         self.output_path.write_bytes(b"ticket-data")
@@ -136,8 +142,9 @@ class SHSHMaterialTests(unittest.TestCase):
             with patch("odtslib.shsh_material._build_context", return_value={"build": "19P647", "version": "6.1", "source": "explicit --build override", "manifest_path": None}):
                 with patch("odtslib.shsh_material.ToolRegistry", return_value=_FakeRegistry(b"ticket-data")):
                     with patch("odtslib.shsh_material.SHSH_PATH", self.output_path):
-                        with patch("odtslib.shsh_material._host_side_compatibility_probe", return_value={"manifest_build": "19P647", "im4m_generation_succeeded": True, "available_artifacts_wrapped_successfully": 2, "available_artifacts_rejected": 0, "host_side_mismatch_rejected": False}):
-                            report = acquire_shsh_for_connected_device(build="19P647")
+                        with patch("odtslib.shsh_material.SHSH_METADATA_PATH", self.metadata_path):
+                            with patch("odtslib.shsh_material._host_side_compatibility_probe", return_value={"manifest_build": "19P647", "im4m_generation_succeeded": True, "available_artifacts_wrapped_successfully": 2, "available_artifacts_rejected": 0, "host_side_mismatch_rejected": False}):
+                                report = acquire_shsh_for_connected_device(build="19P647")
         self.assertEqual(report["write_status"], "reused_existing")
         self.assertEqual(self.output_path.read_bytes(), b"ticket-data")
 
@@ -146,7 +153,8 @@ class SHSHMaterialTests(unittest.TestCase):
             with patch("odtslib.shsh_material._build_context", return_value={"build": "19P647", "version": "6.1", "source": "repo-aligned default manifest", "manifest_path": "/tmp/BuildManifest.plist"}):
                 with patch("odtslib.shsh_material.ToolRegistry", return_value=_FailingRegistry()):
                     with patch("odtslib.shsh_material.SHSH_PATH", self.output_path):
-                        report = acquire_shsh_for_connected_device(build="19P647")
+                        with patch("odtslib.shsh_material.SHSH_METADATA_PATH", self.metadata_path):
+                            report = acquire_shsh_for_connected_device(build="19P647")
         self.assertFalse(report["acquired"])
         self.assertEqual(report["write_status"], "not_written")
         self.assertIn("-B j152fap", report["command"])
@@ -161,9 +169,10 @@ class SHSHMaterialTests(unittest.TestCase):
             with patch("odtslib.shsh_material._build_context", side_effect=_FallbackBuildContext()):
                 with patch("odtslib.shsh_material._latest_signed_build_context", return_value={"build": "23P3120", "version": "10.3", "source": "latest signed build for connected device context", "manifest_path": None}):
                     with patch("odtslib.shsh_material.SHSH_PATH", self.output_path):
-                        with patch("odtslib.shsh_material._host_side_compatibility_probe", return_value={"manifest_build": "19P647", "im4m_generation_succeeded": True, "available_artifacts_wrapped_successfully": 2, "available_artifacts_rejected": 0, "host_side_mismatch_rejected": False}):
-                            with patch("odtslib.shsh_material.ToolRegistry", side_effect=[_FailingRegistry(), _FakeRegistry(b"ticket-data")]):
-                                report = acquire_shsh_for_connected_device()
+                        with patch("odtslib.shsh_material.SHSH_METADATA_PATH", self.metadata_path):
+                            with patch("odtslib.shsh_material._host_side_compatibility_probe", return_value={"manifest_build": "19P647", "im4m_generation_succeeded": True, "available_artifacts_wrapped_successfully": 2, "available_artifacts_rejected": 0, "host_side_mismatch_rejected": False}):
+                                with patch("odtslib.shsh_material.ToolRegistry", side_effect=[_FailingRegistry(), _FakeRegistry(b"ticket-data")]):
+                                    report = acquire_shsh_for_connected_device()
         self.assertTrue(report["acquired"])
         self.assertTrue(report["fallback_used"])
         self.assertFalse(report["requested_latest_signed"])
@@ -181,8 +190,9 @@ class SHSHMaterialTests(unittest.TestCase):
             with patch("odtslib.shsh_material._build_context", return_value={"build": "23P3120", "version": "9.3", "source": "latest signed build for connected device context", "manifest_path": None}):
                 with patch("odtslib.shsh_material.ToolRegistry", return_value=_FakeRegistry(b"ticket-data")):
                     with patch("odtslib.shsh_material.SHSH_PATH", self.output_path):
-                        with patch("odtslib.shsh_material._host_side_compatibility_probe", return_value={"manifest_build": "19P647", "im4m_generation_succeeded": True, "available_artifacts_wrapped_successfully": 1, "available_artifacts_rejected": 1, "host_side_mismatch_rejected": True}):
-                            report = acquire_shsh_for_connected_device(latest_signed=True)
+                        with patch("odtslib.shsh_material.SHSH_METADATA_PATH", self.metadata_path):
+                            with patch("odtslib.shsh_material._host_side_compatibility_probe", return_value={"manifest_build": "19P647", "im4m_generation_succeeded": True, "available_artifacts_wrapped_successfully": 1, "available_artifacts_rejected": 1, "host_side_mismatch_rejected": True}):
+                                report = acquire_shsh_for_connected_device(latest_signed=True)
         self.assertTrue(report["requested_latest_signed"])
         self.assertTrue(report["used_latest_signed"])
         self.assertEqual(report["selected_build"], "23P3120")
