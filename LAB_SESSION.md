@@ -1,5 +1,198 @@
 # LAB SESSION
 
+## 2026-03-17 Hybrid Signing Readiness Model
+
+### Scope
+
+- align tool and doc messaging with the confirmed hybrid T2 design
+- make SHSH failure semantics explicit as architecture-level, not just file-level
+
+### Findings
+
+- the current legacy T2 path uses both:
+  - pwned-DFU / `nop_image4.py`
+  - SHSH-backed IMG4 signing
+- SHSH is not required for every single transmitted artifact
+- SHSH is still functionally required overall in the current implementation
+- failure to obtain SHSH for the selected device/build is therefore a real architecture blocker, not just a missing local file
+
+### Updated Readiness Distinction
+
+- payload readiness
+- runtime readiness
+- signing-material presence
+- signing-status availability from Apple or an already valid existing blob
+- execution readiness
+
+### Operator/Admin Note
+
+- an already valid previously acquired blob can satisfy the current requirement if it matches the same connected device and the same selected build
+
+## 2026-03-17 SHSH Identity-Selection Gap
+
+### Scope
+
+- compare legacy `tsschecker` usage against the new safe SHSH acquisition path
+- fix only missing identity-selection context for bridgeOS/T2 manifests
+
+### Observed Failure
+
+On the live host, the initial safe SHSH command reached `tsschecker` but failed at BuildIdentity selection for:
+
+- device: `iBridge2,14`
+- build: `19P647`
+- board: `j152fap`
+
+Observed behavior:
+
+- firmware URL resolved correctly
+- BuildManifest opened correctly
+- `installType=Erase` identity selection failed
+- fallback `installType=Update` also failed
+- TSS request could not be built
+
+### Gap Analysis
+
+Legacy ODTS only passed:
+
+- `-d`
+- `-e`
+- `-i`
+- `-s`
+
+The new safe path originally did the same.
+
+The missing context was not an exploit behavior issue. It was the absence of planner-selected identity parameters that modern ODTS already knew:
+
+- board config `j152fap`
+- build ID `19P647`
+- explicit repo-aligned `BuildManifest.plist`
+
+### Fix Applied
+
+`--acquire-shsh` now passes the richer identity-selection context when available:
+
+- `-Z <build>`
+- `-B <board_config>`
+- `-m <BuildManifest.plist>`
+
+It also now reports:
+
+- full `tsschecker` command
+- working directory
+- manifest path and whether it was supplied explicitly
+- temp files created during acquisition
+
+### Validation
+
+- `./venv/bin/python -m unittest tests.test_shsh_material tests.test_prepare_device tests.test_execution_preflight`
+- `10` tests passing
+
+## 2026-03-17 Safe SHSH Acquisition
+
+### Scope
+
+- convert the final current blocker into a safe operator-facing workflow
+- keep SHSH acquisition separate from exploit or live execution
+
+### Changes Applied
+
+- added `--acquire-shsh`
+- added `odtslib/shsh_material.py`
+- acquisition flow now:
+  - detects the connected device safely
+  - reads `ECID`, product, and board context
+  - selects the repo-aligned build by default unless overridden
+  - invokes `tsschecker` in an isolated temp directory
+  - normalizes the produced ticket to `resources/shsh.shsh`
+- preflight readiness now distinguishes:
+  - `payload_material_ready`
+  - `signing_material_ready`
+
+### Validation
+
+- `./venv/bin/python -m unittest tests.test_shsh_material tests.test_prepare_device tests.test_execution_preflight tests.test_legacy_pwn_runtime`
+- `12` tests passing
+
+### Current Operator Sequence
+
+Preferred safe sequence from a prepared host:
+
+```bash
+./venv/bin/python odts.py --prepare-device
+./venv/bin/python odts.py --acquire-shsh
+./venv/bin/python odts.py --preflight
+```
+
+## 2026-03-17 SHSH Material Boundary
+
+### Scope
+
+- isolate the final current preflight blocker at `resources/shsh.shsh`
+- determine whether the missing file is payload, signing-material, or runtime related
+
+### Findings
+
+- payload readiness is now satisfied
+- the remaining preflight blocker is signing-material readiness, not payload sourcing
+- legacy ODTS obtained this file automatically during execution-oriented staging by:
+  - reading connected device `ECID`
+  - invoking `tsschecker`
+  - producing a `.shsh2` file in the working directory
+  - moving it to `resources/shsh.shsh`
+- the file is treated as the signing ticket consumed by `img4tool -s`
+
+### Current Root Cause
+
+- removed legacy generation logic from the safe planning/preflight path
+- signing-material acquisition is not yet surfaced as its own safe helper or documented operator/admin step
+- the path `resources/shsh.shsh` itself is not the problem
+
+### Current State
+
+- payload-ready: yes
+- signing-material-ready: no
+- runtime-ready: no
+
+### Next Safe Target
+
+- add or document a non-destructive SHSH acquisition path for the connected device and selected build
+
+## 2026-03-17 Operator Preparation Command
+
+### Scope
+
+- reduce operator CLI complexity for the safe planning/preflight path
+- keep the flow non-destructive and hardware-safe
+- orchestrate existing helpers instead of adding new execution logic
+
+### Changes Applied
+
+- added `--prepare-device` to `odts.py`
+- the new command:
+  - detects the connected device
+  - reads product and board config
+  - uses the repo-aligned build by default unless overridden
+  - uses local `--ipsw` extraction when provided
+  - otherwise uses the safe remote payload helper
+  - extracts planned payloads into canonical `IPSW/`
+  - runs non-destructive preflight automatically
+- updated local payload extraction to persist `BuildManifest.plist` into canonical `IPSW/` as well
+- added `OPERATOR_WORKFLOW.md`
+
+### Validation
+
+- `./venv/bin/python -m unittest tests.test_prepare_device tests.test_payload_layout tests.test_execution_preflight tests.test_legacy_pwn_runtime`
+- `11` tests passing
+
+### Current Operator Entry Point
+
+Preferred command for a prepared lab host:
+
+```bash
+./venv/bin/python odts.py --prepare-device
+```
+
 ## 2026-03-17 Host Bootstrap / Runtime Readiness
 
 ### Scope

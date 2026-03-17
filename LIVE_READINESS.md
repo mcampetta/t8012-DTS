@@ -11,13 +11,30 @@ Rationale:
 - required patch/sign/query tools are currently runnable
 - planned firmware payload sources now resolve from the canonical local `IPSW/` layout
 - local and remote payload sourcing helpers are both available for repeatable preparation
+- the current T2 path is hybrid by design:
+  - pwned-DFU / `nop_image4.py` is used to relax Image4 handling
+  - SHSH-backed IMG4 signing is still used for most of the boot chain
+- signing material is still missing at `resources/shsh.shsh`
 - the first execution-side step still routes through legacy and unverified code
 
 ## Current Blockers
 
 There are no remaining payload-resolution blockers in the current preflight result.
 
-The remaining blocker is execution-side uncertainty:
+The remaining blockers are now split across two different readiness layers:
+
+- signing-material readiness:
+  - `resources/shsh.shsh` is not present
+  - SHSH is still functionally required in the current implementation overall
+  - safe operator action now exists:
+    - `./venv/bin/python odts.py --acquire-shsh`
+  - inability to obtain a valid blob for `iBridge2,14` / `19P647` is a real architecture blocker, not just a missing-file problem
+- runtime readiness:
+  - legacy pwn/runtime boundary still not preview-clean
+- execution readiness:
+  - still blocked because the current pipeline depends on both the SHSH-backed signing path and the unverified pwned-DFU/Image4-bypass path
+
+Execution-side uncertainty remains:
 
 - first execution-side step: `enter-pwned-dfu`
 - classification: `unverified`
@@ -69,6 +86,9 @@ Current runtime-check finding:
 
 Traceability:
 
+- see `OPERATOR_WORKFLOW.md` for the single-command operator preparation flow
+- see `SHSH_ACQUISITION_GAP_ANALYSIS.md` for the bridgeOS/T2 `tsschecker` identity-selection mismatch and the current argument-parity fix
+- see `SHSH_MATERIAL_ANALYSIS.md` for the signing-material contract, original acquisition flow, and current operator/admin action
 - see `MISSING_PAYLOADS.md` for per-component source paths, derivation, expected source kind, module ownership, and proposed non-destructive remediation
 - see `IPSW_SOURCING.md` for the original legacy firmware sourcing flow and the exact local `IPSW/` layout expected by the old local-IPSW path
 - see `REMOTE_IPSW_SOURCING.md` for the safe remote metadata lookup, archive inspection, selective extraction path, and cache file
@@ -144,6 +164,8 @@ Would a valid local IPSW/extraction clear the current blocker?
 - payload-material blockers are already cleared on this machine
 - a valid local IPSW or remote selective extraction is sufficient to recreate that prepared state
 - no, payload availability alone does not prove readiness for controlled live step testing
+- no, payload availability alone does not satisfy signing-material readiness
+- yes, an already valid previously acquired blob can satisfy the current signing-material requirement if it matches the same connected device and selected build
 - no, solving the runtime compatibility blockers alone would still not prove device-side behavior
 - the repo still needs an explicit decision on whether the `enter-pwned-dfu` step is sufficiently instrumented and observable to advance beyond planning-only status
 
@@ -153,6 +175,7 @@ Before any live attempt, capture:
 
 ```bash
 ./venv/bin/python odts.py --device-state --verbose
+./venv/bin/python odts.py --acquire-shsh --json
 ./venv/bin/python odts.py --execution-graph --json
 ./venv/bin/python odts.py --preflight --json
 ./venv/bin/python odts.py -q /path/to/restore.ipsw iBridge2,14 --payload-layout --json
@@ -187,6 +210,8 @@ Stop immediately if any of the following occur:
 ## Commands To Recheck Readiness
 
 ```bash
+./venv/bin/python odts.py --prepare-device
+./venv/bin/python odts.py --acquire-shsh
 ./venv/bin/python odts.py --execution-graph
 ./venv/bin/python odts.py --preflight
 ./venv/bin/python odts.py --remote-payload-layout iBridge2,14 --board-config j152fap

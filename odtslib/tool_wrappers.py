@@ -9,7 +9,7 @@ from typing import Iterable, Sequence
 
 from .config import BIN_DIR, PROJECT_ROOT
 from .exceptions import DependencyError, ExternalToolError, ODTSError
-from .subprocess_utils import CommandResult, run_command
+from .subprocess_utils import CommandResult, format_command, run_command
 
 
 @dataclass(frozen=True)
@@ -357,13 +357,62 @@ class TSSCheckerTool(ExternalBinaryWrapper):
         device_model: str,
         ecid: str,
         ios_version: str,
+        board_config: str | None = None,
+        build_id: str | None = None,
+        build_manifest: str | Path | None = None,
+        save_path: str | Path | None = None,
+        update_install: bool = False,
+        cwd: str | Path | None = None,
         dry_run: bool = False,
     ) -> CommandResult:
         binary = self.validate_exists(dry_run=dry_run)
-        return self.run(
-            [binary, "-d", device_model, "-e", ecid, "-i", ios_version, "-s"],
-            dry_run=dry_run,
-        )
+        args: list[str | Path] = [binary, "-d", device_model, "-e", ecid]
+        if build_id:
+            args.extend(["--buildid", build_id])
+        else:
+            args.extend(["-i", ios_version])
+        if board_config:
+            args.extend(["-B", board_config])
+        if build_manifest:
+            args.extend(["-m", build_manifest])
+        if save_path:
+            save_dir = Path(save_path)
+            save_dir.mkdir(parents=True, exist_ok=True)
+            args.extend(["--save-path", save_dir])
+        if update_install:
+            args.append("-u")
+        args.append("-s")
+        return self.run(args, dry_run=dry_run, cwd=cwd)
+
+    def build_request_shsh_command(
+        self,
+        *,
+        device_model: str,
+        ecid: str,
+        ios_version: str,
+        board_config: str | None = None,
+        build_id: str | None = None,
+        build_manifest: str | Path | None = None,
+        save_path: str | Path | None = None,
+        update_install: bool = False,
+        dry_run: bool = False,
+    ) -> str:
+        binary = self.validate_exists(dry_run=dry_run)
+        args: list[str | Path] = [binary, "-d", device_model, "-e", ecid]
+        if build_id:
+            args.extend(["--buildid", build_id])
+        else:
+            args.extend(["-i", ios_version])
+        if board_config:
+            args.extend(["-B", board_config])
+        if build_manifest:
+            args.extend(["-m", build_manifest])
+        if save_path:
+            args.extend(["--save-path", save_path])
+        if update_install:
+            args.append("-u")
+        args.append("-s")
+        return format_command(args)
 
 
 class Img4Tool(ExternalBinaryWrapper):
@@ -393,6 +442,16 @@ class Img4Tool(ExternalBinaryWrapper):
             [binary, "-e", "-o", output_path, "--iv", iv, "--key", key, image_path],
             dry_run=dry_run,
         )
+
+    def extract_im4m(
+        self,
+        *,
+        shsh_path: str | Path,
+        output_path: str | Path,
+        dry_run: bool = False,
+    ) -> CommandResult:
+        binary = self.validate_exists(dry_run=dry_run)
+        return self.run([binary, "-e", "-s", shsh_path, "-m", output_path], dry_run=dry_run)
 
     def create_im4p(
         self,

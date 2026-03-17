@@ -44,7 +44,11 @@ class LegacyTouchpoint:
 class ReadinessSummary:
     level: str
     rationale: str
+    execution_model: str
     only_blocker_is_missing_payload_material: bool
+    signing_material_ready: bool
+    payload_material_ready: bool
+    signing_status_availability: str
     operator_action_needed: str
     would_valid_local_payloads_enable_live_step_testing: bool
     first_execution_step_name: str
@@ -497,6 +501,13 @@ def _readiness_summary(
             first_step_classification = "unverified"
 
     payload_only_blockers = bool(blockers) and all("no local source payload found" in blocker for blocker in blockers)
+    signing_material_ready = not any("signing material missing" in blocker for blocker in blockers)
+    payload_material_ready = not any("no local source payload found" in blocker for blocker in blockers)
+    signing_status_availability = (
+        "satisfied by existing valid local blob"
+        if signing_material_ready
+        else "unknown or unavailable for selected device/build until SHSH acquisition succeeds"
+    )
 
     if any("tool not runnable" in blocker for blocker in blockers) or any("legacy module missing" in blocker for blocker in blockers):
         level = "not ready for live testing"
@@ -526,7 +537,11 @@ def _readiness_summary(
     return ReadinessSummary(
         level=level,
         rationale=rationale,
+        execution_model="hybrid pwned-DFU/Image4-bypass plus SHSH-backed signing",
         only_blocker_is_missing_payload_material=payload_only_blockers,
+        signing_material_ready=signing_material_ready,
+        payload_material_ready=payload_material_ready,
+        signing_status_availability=signing_status_availability,
         operator_action_needed=operator_action_needed,
         would_valid_local_payloads_enable_live_step_testing=payloads_enable_live_testing,
         first_execution_step_name=first_step_name,
@@ -581,6 +596,10 @@ def render_execution_preflight(preflight: dict[str, object], *, json_output: boo
         f"Ready for live execution: {preflight['ready_for_live_execution']}",
         f"Readiness level: {preflight['readiness']['level']}",
         f"Readiness rationale: {preflight['readiness']['rationale']}",
+        f"Execution model: {preflight['readiness']['execution_model']}",
+        f"Payload material ready: {preflight['readiness']['payload_material_ready']}",
+        f"Signing material ready: {preflight['readiness']['signing_material_ready']}",
+        f"Signing-status availability: {preflight['readiness']['signing_status_availability']}",
         f"Only blocker is missing payload material: {preflight['readiness']['only_blocker_is_missing_payload_material']}",
         f"Operator action needed: {preflight['readiness']['operator_action_needed']}",
         f"Would valid local payloads enable live step testing: {preflight['readiness']['would_valid_local_payloads_enable_live_step_testing']}",

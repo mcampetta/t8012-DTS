@@ -58,7 +58,7 @@ After bootstrap completes:
 ```bash
 source ./.odts-legacy-python.env
 ./venv/bin/python odts.py --check-legacy-pwn-runtime
-./venv/bin/python odts.py --preflight
+./venv/bin/python odts.py --prepare-device
 ```
 
 If payload material is not already prepared on that host, continue with one of:
@@ -67,6 +67,12 @@ If payload material is not already prepared on that host, continue with one of:
 ./venv/bin/python odts.py --remote-payload-layout iBridge2,14 --board-config j152fap --extract-planned-payloads
 ./venv/bin/python odts.py -q /path/to/restore.ipsw iBridge2,14 --payload-layout --extract-planned-payloads
 ./venv/bin/python odts.py --preflight
+```
+
+For routine operator use on a prepared host, prefer the single guided command:
+
+```bash
+./venv/bin/python odts.py --prepare-device
 ```
 
 ## Manual Steps Still Required
@@ -132,6 +138,18 @@ The current lab model expects:
 - `libusb_backend_ready=False`
 - `vendored_libusbfinder_ready=False`
 
+Current setup should also be understood separately from signing-material readiness:
+
+- bootstrap can prepare the host runtime and repo environment
+- bootstrap does not generate `resources/shsh.shsh`
+- that signing ticket remains a separate device/build-specific prerequisite for live signing stages
+
+After host bootstrap and device connection, acquire signing material with:
+
+```bash
+./venv/bin/python odts.py --acquire-shsh
+```
+
 That means bootstrap can make host setup reproducible, but it does not yet clear the remaining vendored packaging/import boundary automatically.
 
 ## Troubleshooting
@@ -160,6 +178,8 @@ Use these commands to verify another machine:
 source ./.odts-legacy-python.env
 ./venv/bin/python odts.py --check-legacy-pwn-runtime
 ./venv/bin/python odts.py --check-legacy-pwn-runtime --json
+./venv/bin/python odts.py --prepare-device
+./venv/bin/python odts.py --prepare-device --json
 ./venv/bin/python odts.py --preflight
 ./venv/bin/python odts.py --preflight --json
 ```

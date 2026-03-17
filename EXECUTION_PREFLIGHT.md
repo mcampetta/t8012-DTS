@@ -88,8 +88,37 @@ For the currently planned `j152fap` flow:
 - `Firmware/J152f_Multitouch.im4p`
 - `resources/018-75901-013.dmg`
 - `resources/bootlogo.png`
-- `resources/shsh.shsh`
 - `resources/ipwndfu8012/BuildManifest.plist`
+
+## Readiness Layers
+
+The current safe workflow now needs to be read in three separate layers:
+
+- payload readiness
+  - planned firmware payloads resolve locally
+  - current status: satisfied on this lab host after local or remote extraction
+- signing-material readiness
+  - `resources/shsh.shsh` exists for the selected connected device and selected build
+  - current status: not satisfied
+- runtime readiness
+  - the legacy Python/libusb runtime boundary is clean enough for controlled execution-adjacent testing
+  - current status: not satisfied
+
+## Current Required Signing Material
+
+For live image signing stages, preflight currently expects:
+
+- `resources/shsh.shsh`
+
+This is not payload material.
+
+It is the personalized signing ticket used by `img4tool` when wrapping patched IMG4 payloads.
+
+Acquire it with:
+
+```bash
+./venv/bin/python odts.py --acquire-shsh
+```
 
 ## What Is Currently Validated
 
@@ -100,6 +129,7 @@ For the currently planned `j152fap` flow:
 - artifact planning for `j152fap`
 - execution-graph rendering
 - preflight blocker reporting
+- safe SHSH acquisition into `resources/shsh.shsh`
 
 ## What Remains Legacy Or Unverified
 

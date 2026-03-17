@@ -73,7 +73,9 @@ class PayloadLayoutTests(unittest.TestCase):
         )
         self.assertTrue((self.destination / "Firmware/dfu/iBEC.j152f.RELEASE.im4p").exists())
         self.assertTrue((self.destination / "Firmware/dfu/iBSS.j152f.RELEASE.im4p").exists())
-        self.assertEqual(len(report["actions"]), 2)
+        self.assertTrue((self.destination / "BuildManifest.plist").exists())
+        self.assertEqual(report["manifest_destination"], str(self.destination / "BuildManifest.plist"))
+        self.assertEqual(len(report["actions"]), 3)
 
 
 if __name__ == "__main__":

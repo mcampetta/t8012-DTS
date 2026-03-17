@@ -55,6 +55,8 @@ def inspect_payload_layout(
     actions = []
     names: set[str] = set()
     archive = ZipFile(archive_path, "r") if archive_path else None
+    manifest_destination = destination / "BuildManifest.plist"
+    manifest_action = None
     try:
         if archive:
             names = set(archive.namelist())
@@ -88,6 +90,14 @@ def inspect_payload_layout(
                 with archive.open(relative_path) as src, destination_path.open("wb") as dst:
                     shutil.copyfileobj(src, dst)
                 actions.append({"component": component.logical_name, "extracted_to": str(destination_path)})
+
+        if archive:
+            manifest_present = manifest_destination.exists()
+            manifest_action = "already extracted" if manifest_present else "extract IPSW"
+            if extract and not manifest_present:
+                manifest_destination.parent.mkdir(parents=True, exist_ok=True)
+                manifest_destination.write_bytes(archive.read("BuildManifest.plist"))
+                actions.append({"component": "BuildManifest", "extracted_to": str(manifest_destination)})
     finally:
         if archive:
             archive.close()
@@ -95,8 +105,12 @@ def inspect_payload_layout(
     result = {
         "board_config": board_config,
         "manifest": str(manifest.path),
+        "product_version": plan.product_version,
+        "build": plan.build_number,
         "destination_root": str(destination),
         "archive_path": str(archive_path) if archive_path else None,
+        "manifest_destination": str(manifest_destination) if archive else None,
+        "manifest_action": manifest_action,
         "components": components,
         "actions": actions,
         "all_components_available": all(
@@ -113,11 +127,14 @@ def render_payload_layout(report: dict[str, object], *, json_output: bool) -> st
     lines = [
         "Payload layout",
         f"Board: {report['board_config']}",
+        f"Build: {report.get('build') or 'unknown'}",
         f"Destination root: {report['destination_root']}",
         f"Archive: {report['archive_path'] or 'none'}",
         f"All planned payloads available from archive or destination: {report['all_components_available']}",
-        "Components:",
     ]
+    if report.get("manifest_destination"):
+        lines.append(f"Manifest destination: {report['manifest_destination']} ({report['manifest_action']})")
+    lines.append("Components:")
     for component in report["components"]:
         lines.append(
             f"  - {component['logical_name']}: relative_file={component['relative_file']} action={component['action']}"

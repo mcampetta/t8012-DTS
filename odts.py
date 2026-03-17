@@ -34,6 +34,7 @@ from odtslib.pwn_runtime_audit import (
     render_enter_pwned_dfu_runtime_audit,
 )
 from odtslib.remote_ipsw import inspect_remote_payload_layout, render_remote_payload_layout
+from odtslib.shsh_material import acquire_shsh_for_connected_device, render_shsh_acquisition
 from odtslib.diagnostics import collect_diagnostics
 from odtslib.exceptions import DependencyError, DeviceStateError, ODTSError, UnsupportedHostError
 from odtslib.firmware_pipeline import (
@@ -71,7 +72,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=DESCRIPTION)
     parser.add_argument("command", nargs="?", choices=["setup"], help="Optional management command")
     parser.add_argument("-i", "--ios", nargs=2, metavar=("DEVICE", "IOS"), help="Download assets for DEVICE and IOS")
-    parser.add_argument("-q", "--ipsw", nargs=2, metavar=("PATH", "DEVICE"), help="Use a local IPSW PATH for DEVICE")
+    parser.add_argument(
+        "-q",
+        "--ipsw",
+        nargs="+",
+        metavar=("PATH", "DEVICE"),
+        help="Use a local IPSW PATH for DEVICE. With --prepare-device, --payload-layout, or --validate-firmware, PATH alone is accepted.",
+    )
     parser.add_argument("-b", "--bootlogo", metavar="LOGO", help="Path to a custom PNG boot logo")
     parser.add_argument("-p", "--pwn", action="store_true", help="Enter pwned DFU mode")
     parser.add_argument("--amfi", action="store_true", help="Apply AMFI kernel patches when supported")
@@ -88,9 +95,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--preflight", action="store_true", help="Run a non-destructive execution preflight for the selected or connected device")
     parser.add_argument("--payload-layout", action="store_true", help="Inspect or prepare the expected local payload layout for the planned components")
     parser.add_argument("--remote-payload-layout", metavar="DEVICE", help="Inspect or prepare planned payloads directly from a remote restore IPSW without full local download")
+    parser.add_argument("--prepare-device", action="store_true", help="Detect a connected device, prepare planned payloads into IPSW/, and run non-destructive preflight")
     parser.add_argument("--preview-enter-pwned-dfu", action="store_true", help="Preview the first execution-side step with file, interpreter, and launcher diagnostics only")
     parser.add_argument("--audit-enter-pwned-dfu-runtime", action="store_true", help="Statically audit the full legacy runtime compatibility chain for enter-pwned-dfu without execution")
     parser.add_argument("--check-legacy-pwn-runtime", action="store_true", help="Check the host-side legacy T8012 Python/libusb runtime contract without execution")
+    parser.add_argument("--acquire-shsh", action="store_true", help="Safely acquire signing material for the connected device and selected build into resources/shsh.shsh")
+    parser.add_argument("--latest-signed", action="store_true", help="With --acquire-shsh, target the currently signed build for the connected device instead of the repo-aligned default build")
     parser.add_argument("--extract-planned-payloads", action="store_true", help="With --payload-layout or --remote-payload-layout, extract only the planned payload files into a safe local directory")
     parser.add_argument("--payload-root", help="Optional destination root for planned payload layout inspection or extraction")
     parser.add_argument("--build", help="Optional build override for remote payload layout lookup, for example 19P647")
@@ -246,6 +256,147 @@ def _resolve_manifest_path_for_safe_planning(args: argparse.Namespace, logger) -
     raise ODTSError("No manifest source available. Use --manifest PATH or -q PATH DEVICE.")
 
 
+def _default_repo_build() -> str | None:
+    bundled_manifest = PROJECT_ROOT / "resources/ipwndfu8012/BuildManifest.plist"
+    if not bundled_manifest.exists():
+        return None
+    try:
+        return load_manifest_for_planning(bundled_manifest).product_build_version
+    except ODTSError:
+        return None
+
+
+def _render_prepare_device(report: dict[str, object], *, json_output: bool) -> str:
+    if json_output:
+        return json.dumps(report, indent=2, sort_keys=True)
+
+    lines = [
+        "Prepare device",
+        f"Device detected: {report['device_detected']}",
+        f"Device state: {report['device_state']}",
+        f"Product: {report['product'] or 'unknown'}",
+        f"Board config: {report['board_config'] or 'unknown'}",
+        f"Selected build: {report['selected_build'] or 'unknown'}",
+        f"Build source: {report['build_source'] or 'unknown'}",
+        f"Payload source used: {report['payload_source_used']}",
+    ]
+    if report.get("payload_source_detail"):
+        lines.append(f"Payload source detail: {report['payload_source_detail']}")
+    if report.get("payload_extraction_result"):
+        lines.append(f"Extraction result: {report['payload_extraction_result']}")
+    if report.get("preflight_result"):
+        lines.append(f"Preflight result: {report['preflight_result']}")
+    if report.get("readiness_level"):
+        lines.append(f"Current readiness level: {report['readiness_level']}")
+    if report.get("next_recommended_command"):
+        lines.append(f"Next recommended command: {report['next_recommended_command']}")
+    if report.get("notes"):
+        lines.append("Notes:")
+        for note in report["notes"]:
+            lines.append(f"  - {note}")
+    return "\n".join(lines)
+
+
+def run_prepare_device(args: argparse.Namespace, logger) -> int:
+    logger.info("Preparing connected device for payload sourcing and non-destructive preflight")
+    device_report = collect_device_state_report()
+    product = str(device_report.identifiers.get("PRODUCT") or "")
+    board_config = str(device_report.identifiers.get("MODEL") or "")
+    repo_default_build = _default_repo_build()
+    initial_build = args.build or repo_default_build
+    initial_build_source = (
+        "explicit --build override"
+        if args.build
+        else "repo-aligned default manifest"
+        if repo_default_build
+        else "inferred from connected device context"
+    )
+    report: dict[str, object] = {
+        "device_detected": device_report.state == "identifiers_ready",
+        "device_state": device_report.state,
+        "product": product or None,
+        "board_config": board_config or None,
+        "selected_build": initial_build,
+        "build_source": initial_build_source,
+        "payload_source_used": "none",
+        "payload_source_detail": None,
+        "payload_extraction_result": None,
+        "preflight_result": None,
+        "readiness_level": None,
+        "next_recommended_command": None,
+        "device_report": asdict(device_report),
+        "payload_report": None,
+        "preflight": None,
+        "notes": [],
+    }
+
+    if device_report.state != "identifiers_ready" or not product or not board_config:
+        report["notes"].append("Connected device identifiers are not ready for planning.")
+        report["next_recommended_command"] = "./venv/bin/python odts.py --device-state --verbose"
+        print(_render_prepare_device(report, json_output=args.json))
+        return 2
+
+    if args.ipsw:
+        ipsw_path = Path(args.ipsw[0]).expanduser().resolve()
+        if not ipsw_path.exists():
+            raise ODTSError(f"Local IPSW path does not exist: {ipsw_path}")
+        payload_report = inspect_payload_layout(
+            ipsw_path=ipsw_path,
+            manifest_path=None,
+            board_config=board_config,
+            destination_root=args.payload_root or LOCAL_IPSW_DIR,
+            extract=True,
+        )
+        manifest_path = Path(payload_report["manifest_destination"] or LOCAL_IPSW_DIR / "BuildManifest.plist")
+        report["selected_build"] = payload_report.get("build") or report["selected_build"]
+        report["build_source"] = "local IPSW manifest" if not args.build else "explicit --build override"
+        report["payload_source_used"] = "local_ipsw"
+        report["payload_source_detail"] = str(ipsw_path)
+        report["payload_extraction_result"] = (
+            f"{len(payload_report['actions'])} extraction/reuse action(s); "
+            f"all_components_available={payload_report['all_components_available']}"
+        )
+    else:
+        selected_build = initial_build
+        payload_report = inspect_remote_payload_layout(
+            device=product,
+            board_config=board_config,
+            build=selected_build,
+            destination_root=args.payload_root or LOCAL_IPSW_DIR,
+            extract=True,
+        )
+        report["selected_build"] = payload_report.get("build") or selected_build
+        report["payload_source_used"] = "remote_ipsw"
+        report["payload_source_detail"] = payload_report.get("remote_url")
+        if payload_report.get("fallback"):
+            report["payload_extraction_result"] = "remote payload inspection failed"
+            report["payload_report"] = payload_report
+            report["notes"].append(payload_report["fallback"]["reason"])
+            report["next_recommended_command"] = payload_report["fallback"]["next_step"]
+            print(_render_prepare_device(report, json_output=args.json))
+            return 2
+        manifest_path = Path(payload_report["manifest_destination"])
+        report["payload_extraction_result"] = (
+            f"{len(payload_report['actions'])} extraction/reuse action(s); "
+            f"all_planned_payloads_available_remotely={payload_report['all_planned_payloads_available_remotely']}"
+        )
+
+    manifest = load_manifest_for_planning(manifest_path)
+    preflight = build_execution_preflight(manifest, board_config)
+    report["payload_report"] = payload_report
+    report["preflight"] = preflight
+    report["preflight_result"] = "no blockers" if not preflight["blockers"] else f"{len(preflight['blockers'])} blocker(s)"
+    report["readiness_level"] = preflight["readiness"]["level"]
+    if any("signing material missing" in blocker for blocker in preflight["blockers"]):
+        report["next_recommended_command"] = "./venv/bin/python odts.py --acquire-shsh"
+    elif not preflight["blockers"]:
+        report["next_recommended_command"] = "./venv/bin/python odts.py --preview-enter-pwned-dfu"
+    else:
+        report["next_recommended_command"] = "./venv/bin/python odts.py --preflight"
+    print(_render_prepare_device(report, json_output=args.json))
+    return 0
+
+
 def run_execution_graph(args: argparse.Namespace, logger) -> int:
     manifest_path = _resolve_manifest_path_for_safe_planning(args, logger)
     manifest = load_manifest_for_planning(manifest_path)
@@ -336,10 +487,19 @@ def run_check_legacy_pwn_runtime(args: argparse.Namespace, logger) -> int:
     return 0
 
 
+def run_acquire_shsh(args: argparse.Namespace, logger) -> int:
+    logger.info("Acquiring SHSH signing material without exploit or live execution")
+    report = acquire_shsh_for_connected_device(build=args.build, latest_signed=args.latest_signed)
+    print(render_shsh_acquisition(report, json_output=args.json))
+    return 0 if report.get("acquired") else 2
+
+
 def run_local_ipsw_flow(args: argparse.Namespace, logger) -> int:
     from resources import img4, pwn
 
     tools = ToolRegistry()
+    if len(args.ipsw) != 2:
+        raise ODTSError("Legacy local IPSW mode requires `-q PATH DEVICE`.")
     ipsw_path = Path(args.ipsw[0]).expanduser().resolve()
     device_model = args.ipsw[1]
     if not ipsw_path.exists():
@@ -478,6 +638,10 @@ def main() -> int:
             return run_audit_enter_pwned_dfu_runtime(args, logger)
         if args.check_legacy_pwn_runtime:
             return run_check_legacy_pwn_runtime(args, logger)
+        if args.acquire_shsh:
+            return run_acquire_shsh(args, logger)
+        if args.prepare_device:
+            return run_prepare_device(args, logger)
         if args.remote_payload_layout:
             return run_remote_payload_layout(args, logger)
         if args.payload_layout:

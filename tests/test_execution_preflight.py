@@ -121,7 +121,13 @@ class ExecutionPreflightTests(unittest.TestCase):
         self.assertEqual(preflight["readiness"]["first_execution_step_name"], "enter-pwned-dfu")
         self.assertEqual(preflight["readiness"]["first_execution_step_classification"], "unverified")
         self.assertEqual(preflight["readiness"]["level"], "ready for planning only")
+        self.assertEqual(
+            preflight["readiness"]["execution_model"],
+            "hybrid pwned-DFU/Image4-bypass plus SHSH-backed signing",
+        )
         self.assertFalse(preflight["readiness"]["only_blocker_is_missing_payload_material"])
+        self.assertFalse(preflight["readiness"]["signing_material_ready"])
+        self.assertIn("unknown or unavailable", preflight["readiness"]["signing_status_availability"])
         self.assertFalse(preflight["readiness"]["would_valid_local_payloads_enable_live_step_testing"])
 
     def test_preflight_emits_unresolved_payload_analysis(self):
